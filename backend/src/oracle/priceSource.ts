@@ -45,6 +45,8 @@ export class DataStreamsPriceSource implements PriceSource {
       feedId: report.feedId,
       price: report.price,
       asOf: report.observationsTimestamp,
+      // Preserve the signed blob for the on-ledger Verify choice (CHAINLINK.md §6).
+      signedReport: envelope.fullReport,
     };
   }
 

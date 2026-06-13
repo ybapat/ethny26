@@ -23,7 +23,7 @@ import { DATA_STREAMS } from "../config.ts";
 export function parseWsFrame(
   text: string,
   decimals: number,
-): { feedId: string; price: number; asOf: number } {
+): { feedId: string; price: number; asOf: number; signedReport: string } {
   const json = JSON.parse(text) as { report?: { feedID?: string; fullReport?: string } };
   const r = json.report;
   if (!r || typeof r.fullReport !== "string") {
@@ -34,6 +34,8 @@ export function parseWsFrame(
     feedId: (r.feedID ?? decoded.feedId).toLowerCase(),
     price: decoded.price,
     asOf: decoded.observationsTimestamp,
+    // Preserve the signed blob for the on-ledger Verify choice (CHAINLINK.md §6).
+    signedReport: r.fullReport,
   };
 }
 
@@ -146,7 +148,7 @@ export class DataStreamsWsPriceSource implements PriceSource {
     else if (typeof (data as Blob)?.text === "function") text = await (data as Blob).text();
     else return;
 
-    let parsed: { feedId: string; price: number; asOf: number };
+    let parsed: ReturnType<typeof parseWsFrame>;
     try {
       parsed = parseWsFrame(text, this.decimals);
     } catch {
@@ -154,7 +156,12 @@ export class DataStreamsWsPriceSource implements PriceSource {
     }
     const market = this.feedIdToMarket.get(parsed.feedId);
     if (!market) return;
-    const price: OraclePrice = { feedId: parsed.feedId, price: parsed.price, asOf: parsed.asOf };
+    const price: OraclePrice = {
+      feedId: parsed.feedId,
+      price: parsed.price,
+      asOf: parsed.asOf,
+      signedReport: parsed.signedReport,
+    };
     this.cache.set(market, price);
 
     // wake waiters + notify subscriber

@@ -30,6 +30,14 @@ export interface OraclePrice {
   price: number;
   /** Observation time, unix seconds. */
   asOf: number;
+  /**
+   * The raw Chainlink Data Streams `fullReport` hex (the signed blob), when this
+   * price came from a live Chainlink feed. The real ledger client passes this
+   * UNMODIFIED to the on-ledger Daml `Verify` choice so the price is
+   * cryptographically verified in-transaction (CHAINLINK.md §6). Absent for the
+   * mock/NAV path.
+   */
+  signedReport?: string;
 }
 
 /** One leg of a matched pair. */
@@ -150,6 +158,8 @@ export interface ApplyFundingArgs {
   indexPrice: number;
   /** Unix seconds of application. */
   at: number;
+  /** Signed Chainlink `fullReport` hex for on-ledger Verify (absent on mock path). */
+  signedReport?: string;
 }
 
 export interface LiquidateArgs {
@@ -159,6 +169,8 @@ export interface LiquidateArgs {
   equity: number;
   maintenanceMargin: number;
   at: number;
+  /** Signed Chainlink `fullReport` hex for on-ledger Verify (absent on mock path). */
+  signedReport?: string;
 }
 
 export interface SettleCloseArgs {
@@ -168,18 +180,37 @@ export interface SettleCloseArgs {
   /** Net funding for the closing side (signed USDCx). */
   netFunding: number;
   at: number;
+  /** Signed Chainlink `fullReport` hex for on-ledger Verify (absent on mock path). */
+  signedReport?: string;
+}
+
+/**
+ * A trader's pending request to close a position (DEX.md §8: `PerpPosition.RequestClose`
+ * → venue `SettleClose`). The keeper watches for these and settles them P2P.
+ */
+export interface CloseRequest {
+  /** Contract id of the close-request contract (consumed on settle). */
+  contractId: string;
+  /** The MatchedPair this close targets. */
+  matchedPairContractId: string;
+  /** Which side asked to close. */
+  closingSide: Side;
+  /** Unix seconds the close was requested. */
+  requestedAt: number;
 }
 
 export interface LedgerClient {
   /** All active MatchedPairs visible to the venue party. */
   getActiveMatchedPairs(): Promise<MatchedPair[]>;
-  /** Post a verified/mock price to the on-ledger oracle (MockOraclePrice.UpdatePrice). */
+  /** All pending close requests visible to the venue party (DEX.md §8). */
+  getCloseRequests(): Promise<CloseRequest[]>;
+  /** Post a verified/mock price to the on-ledger oracle (MockOraclePrice.UpdatePrice / Verify). */
   updateOraclePrice(price: OraclePrice): Promise<void>;
   /** Exercise MatchedPair.ApplyFunding. */
   applyFunding(contractId: string, args: ApplyFundingArgs): Promise<void>;
   /** Exercise MatchedPair.Liquidate. */
   liquidate(contractId: string, args: LiquidateArgs): Promise<void>;
-  /** Exercise MatchedPair.SettleClose. */
+  /** Exercise MatchedPair.SettleClose (closes & settles the pair P2P). */
   settleClose(contractId: string, args: SettleCloseArgs): Promise<void>;
 }
 
@@ -200,8 +231,13 @@ export interface PairEvaluation {
   fundingPayment: number | null;
   liquidated: boolean;
   liquidatedSide: Side | null;
+  /** Set when the pair was closed & settled this cycle (DEX.md §8). */
+  settled: boolean;
+  settledSide: Side | null;
   /** Set when a price was too stale to act on this pair. */
   skippedStale: boolean;
+  /** Set when no MarketConfig is registered for the pair's market. */
+  skippedNoConfig: boolean;
 }
 
 export interface CycleResult {
@@ -209,6 +245,8 @@ export interface CycleResult {
   evaluated: number;
   fundingApplied: number;
   liquidated: number;
+  settled: number;
   skippedStale: number;
+  skippedNoConfig: number;
   perPair: PairEvaluation[];
 }

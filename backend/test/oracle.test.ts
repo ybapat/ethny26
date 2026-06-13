@@ -159,6 +159,8 @@ test("parseWsFrame decodes a {report:{feedID,fullReport}} push", () => {
   assert.equal(out.feedId, FEED_IDS.ETH_USD.toLowerCase());
   assert.ok(Math.abs(out.price - 2484.121) < 1e-6);
   assert.equal(out.asOf, 1716211845);
+  // The signed blob is preserved unmodified for the on-ledger Verify choice.
+  assert.equal(out.signedReport, fullReport);
 });
 
 test("parseWsFrame rejects a frame without report.fullReport", () => {

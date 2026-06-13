@@ -97,7 +97,7 @@ async function main() {
     running = true;
     lastRun = Date.now();
     try {
-      const r = await runTriggerCycle({ ledger, prices, risk, config: cfg, now: nowSec, pushPriceOnLedger: true });
+      const r = await runTriggerCycle({ ledger, prices, risk, markets: [cfg], now: nowSec, pushPriceOnLedger: true });
       if (r.evaluated === 0) {
         console.log(`[${nowSec()}] (${reason}) no active pairs — type 'q' to quit.`);
         return;

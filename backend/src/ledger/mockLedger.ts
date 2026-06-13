@@ -17,6 +17,7 @@ import type {
   ApplyFundingArgs,
   LiquidateArgs,
   SettleCloseArgs,
+  CloseRequest,
 } from "../types.ts";
 
 export type LedgerAction =
@@ -33,6 +34,7 @@ const clone = (p: MatchedPair): MatchedPair => ({
 
 export class MockLedger implements LedgerClient {
   private pairs: Map<string, MatchedPair> = new Map();
+  private closeRequests: Map<string, CloseRequest> = new Map();
   /** Append-only log of everything the loop did. */
   public readonly actions: LedgerAction[] = [];
   /** Latest price pushed per feed (last write wins). */
@@ -47,6 +49,11 @@ export class MockLedger implements LedgerClient {
     this.pairs.set(pair.contractId, clone(pair));
   }
 
+  /** Test helper: register a pending close request for a pair. */
+  seedCloseRequest(req: CloseRequest): void {
+    this.closeRequests.set(req.contractId, { ...req });
+  }
+
   /** Test helper: read current state of a pair (or undefined if archived). */
   peek(contractId: string): MatchedPair | undefined {
     const p = this.pairs.get(contractId);
@@ -55,6 +62,10 @@ export class MockLedger implements LedgerClient {
 
   async getActiveMatchedPairs(): Promise<MatchedPair[]> {
     return Array.from(this.pairs.values()).map(clone);
+  }
+
+  async getCloseRequests(): Promise<CloseRequest[]> {
+    return Array.from(this.closeRequests.values()).map((c) => ({ ...c }));
   }
 
   async updateOraclePrice(price: OraclePrice): Promise<void> {
@@ -80,6 +91,10 @@ export class MockLedger implements LedgerClient {
   async settleClose(contractId: string, args: SettleCloseArgs): Promise<void> {
     if (!this.pairs.has(contractId)) throw new Error(`settleClose: unknown pair ${contractId}`);
     this.pairs.delete(contractId);
+    // Consume any close request(s) targeting this pair.
+    for (const [cid, req] of this.closeRequests) {
+      if (req.matchedPairContractId === contractId) this.closeRequests.delete(cid);
+    }
     this.actions.push({ kind: "settleClose", contractId, args: { ...args } });
   }
 

@@ -79,7 +79,7 @@ function makeDeps(opts: {
     ledger,
     prices,
     risk,
-    config: DEFAULT_MARKET,
+    markets: [DEFAULT_MARKET],
     now: () => NOW,
     pushPriceOnLedger: opts.pushPriceOnLedger,
   };
@@ -238,4 +238,117 @@ test("CycleResult counts are consistent with perPair array", async () => {
     result.skippedStale,
     result.perPair.filter((p) => p.skippedStale).length,
   );
+  assert.equal(result.settled, result.perPair.filter((p) => p.settled).length);
+  assert.equal(
+    result.skippedNoConfig,
+    result.perPair.filter((p) => p.skippedNoConfig).length,
+  );
+});
+
+/* --------------------------- 8. close & settle (Path B) ----------------- */
+
+test("close request => SettleClose, pair removed (no liquidation)", async () => {
+  const pair = healthyPair({ lastFundingTime: NOW - 60 });
+  const { deps, ledger } = makeDeps({ pair, mark: 2100 }); // long in profit
+  ledger.seedCloseRequest({
+    contractId: "close-1",
+    matchedPairContractId: "pair-1",
+    closingSide: "Long",
+    requestedAt: NOW - 5,
+  });
+
+  const result = await runTriggerCycle(deps);
+
+  const settles = ledger.actionsOfKind("settleClose");
+  assert.equal(settles.length, 1, "one settleClose");
+  assert.equal(settles[0].args.closingSide, "Long");
+  assert.equal(settles[0].args.exitPrice, 2100);
+  // realizedPnl for long = (2100-2000)*10 = +1000
+  assert.ok(Math.abs(settles[0].args.realizedPnl - 1000) < 1e-6);
+  assert.equal(result.settled, 1);
+  assert.equal(result.perPair[0].settled, true);
+  assert.equal(result.perPair[0].settledSide, "Long");
+  // close takes priority over liquidation; pair removed.
+  assert.equal(ledger.actionsOfKind("liquidate").length, 0);
+  assert.equal((await ledger.getActiveMatchedPairs()).length, 0);
+});
+
+/* --------------------------- 9. multi-market routing -------------------- */
+
+test("each pair is evaluated with its own market's config/price", async () => {
+  const ethPair = healthyPair({ contractId: "eth-1", lastFundingTime: NOW - 60 });
+  const btcMarket = {
+    ...DEFAULT_MARKET,
+    market: "BTC-USD",
+    collateralInstrument: "tMMF-USD",
+  };
+  const btcPair: MatchedPair = {
+    contractId: "btc-1",
+    market: "BTC-USD",
+    collateralInstrument: "tMMF-USD",
+    size: 1,
+    entryPrice: 60000,
+    long: { trader: "carol", collateralQty: 6000 }, // 10x
+    short: { trader: "dave", collateralQty: 6000 },
+    accruedFundingLong: 0,
+    lastFundingTime: NOW - 60,
+    openedAt: NOW - 100,
+  };
+  const ledger = new MockLedger([ethPair, btcPair]);
+
+  // Per-market price stub.
+  const perp = new Map<string, number>([
+    ["ETH-USD", 2050],
+    ["BTC-USD", 75000], // big up move => BTC short breaches
+  ]);
+  const prices: PriceSource = {
+    async getPerpPrice(m) {
+      return { feedId: m, price: perp.get(m)!, asOf: NOW };
+    },
+    async getRwaNav(i) {
+      return { feedId: i, price: 1.0, asOf: NOW };
+    },
+  };
+
+  const result = await runTriggerCycle({
+    ledger,
+    prices,
+    risk,
+    markets: [DEFAULT_MARKET, btcMarket],
+    now: () => NOW,
+  });
+
+  assert.equal(result.evaluated, 2);
+  // ETH pair healthy at 2050; BTC short liquidated at 75000 (25% move > IMR).
+  const liqs = ledger.actionsOfKind("liquidate");
+  assert.equal(liqs.length, 1);
+  assert.equal(liqs[0].contractId, "btc-1");
+  assert.equal(liqs[0].args.side, "Short");
+  assert.equal(liqs[0].args.markPrice, 75000);
+  // ETH pair still active.
+  const active = await ledger.getActiveMatchedPairs();
+  assert.equal(active.some((p) => p.contractId === "eth-1"), true);
+});
+
+/* --------------------------- 10. no config for market ------------------- */
+
+test("pair with no registered market config is skipped", async () => {
+  const pair = healthyPair({ market: "DOGE-USD", lastFundingTime: NOW - 3600 });
+  const ledger = new MockLedger([pair]);
+  const prices = new StubPriceSource(
+    { feedId: "DOGE-USD", price: 1, asOf: NOW },
+    { feedId: DEFAULT_MARKET.collateralInstrument, price: 1, asOf: NOW },
+  );
+  const result = await runTriggerCycle({
+    ledger,
+    prices,
+    risk,
+    markets: [DEFAULT_MARKET], // no DOGE-USD
+    now: () => NOW,
+  });
+
+  assert.equal(result.skippedNoConfig, 1);
+  assert.equal(result.perPair[0].skippedNoConfig, true);
+  assert.equal(ledger.actionsOfKind("applyFunding").length, 0);
+  assert.equal(ledger.actionsOfKind("liquidate").length, 0);
 });

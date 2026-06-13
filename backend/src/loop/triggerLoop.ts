@@ -1,18 +1,20 @@
 /**
- * loop/triggerLoop.ts — the risk/trigger loop (Person 3 / Agent C).
+ * loop/triggerLoop.ts — the risk/trigger loop (Person 3).
  *
- * One deterministic pass over every active `MatchedPair`: refresh prices,
- * enforce staleness guards (DEX.md §10.1), apply per-interval funding
- * (DEX.md §5), then check liquidation (DEX.md §7) — strictly in that order
- * ("SettleFunding before Liquidate", DEX.md §7.4 / §10.1.3).
+ * One deterministic pass over every active `MatchedPair`:
+ *   1. route the pair to its market's config (multi-market),
+ *   2. refresh perp mark + RWA NAV, enforce staleness guards (DEX.md §10.1),
+ *   3. apply per-interval funding (DEX.md §5) — always before settle/liquidation
+ *      ("SettleFunding before ...", DEX.md §7.4),
+ *   4. if the pair has a pending close request → SettleClose P2P (DEX.md §8),
+ *      else check liquidation (DEX.md §7).
  *
- * The loop is parameterized by the `LedgerClient` / `PriceSource` / `RiskApi`
- * interfaces (dependency injection) so it is unit-testable with mocks. It never
- * recomputes risk math itself — every formula comes from the injected `RiskApi`
- * (src/risk/math.ts) and is authoritatively re-checked on-ledger in Daml.
+ * The fresh Chainlink `signedReport` (fullReport hex) is threaded into the
+ * on-ledger choices so the price is verified in-transaction (CHAINLINK.md §6).
  *
- * Erasable-syntax-only TS (no enum/namespace/param-properties); all relative
- * imports carry the `.ts` extension.
+ * Parameterized by the LedgerClient / PriceSource / RiskApi interfaces for
+ * deterministic testing; it never recomputes risk math (uses the injected RiskApi).
+ * Erasable-syntax-only TS; relative imports carry `.ts`.
  */
 
 import type {
@@ -22,6 +24,7 @@ import type {
   MarketConfig,
   CycleResult,
   PairEvaluation,
+  CloseRequest,
 } from "../types.ts";
 
 /** Injected dependencies for a trigger cycle. */
@@ -29,62 +32,74 @@ export interface TriggerDeps {
   ledger: LedgerClient;
   prices: PriceSource;
   risk: RiskApi;
-  config: MarketConfig;
+  /** One config per market; pairs route by `pair.market`. */
+  markets: MarketConfig[];
   /** Clock source (unix seconds). Injectable for deterministic tests. */
   now: () => number;
   /** When true, push the fresh perp price to the on-ledger oracle each cycle. */
   pushPriceOnLedger?: boolean;
 }
 
-/**
- * Run one deterministic risk/trigger pass over all active matched pairs.
- *
- * Per pair: refresh perp mark + RWA NAV, apply staleness guards (DEX.md §10.1 —
- * mark-stale halts both funding and liquidation; NAV-stale is treated as a soft
- * skip), apply due funding (DEX.md §5) BEFORE evaluating liquidation
- * (DEX.md §7, ordering per §7.4/§10.1.3), then liquidate the breaching leg if
- * its post-funding equity drops below maintenance margin.
- */
+function blankEval(pair: { contractId: string; market: string }): PairEvaluation {
+  return {
+    contractId: pair.contractId,
+    market: pair.market,
+    markPrice: 0,
+    rwaNav: 0,
+    longEquity: 0,
+    shortEquity: 0,
+    maintenanceMargin: 0,
+    fundingApplied: false,
+    fundingRate: null,
+    fundingPayment: null,
+    liquidated: false,
+    liquidatedSide: null,
+    settled: false,
+    settledSide: null,
+    skippedStale: false,
+    skippedNoConfig: false,
+  };
+}
+
+/** Run one deterministic risk/trigger pass over all active matched pairs. */
 export async function runTriggerCycle(deps: TriggerDeps): Promise<CycleResult> {
-  const { ledger, prices, risk, config } = deps;
+  const { ledger, prices, risk } = deps;
   const now = deps.now();
 
-  const pairs = await ledger.getActiveMatchedPairs();
-  const perPair: PairEvaluation[] = [];
+  const configByMarket = new Map<string, MarketConfig>();
+  for (const m of deps.markets) configByMarket.set(m.market, m);
 
+  const pairs = await ledger.getActiveMatchedPairs();
+  const closeRequests = await ledger.getCloseRequests();
+  const closeByPair = new Map<string, CloseRequest>();
+  for (const c of closeRequests) closeByPair.set(c.matchedPairContractId, c);
+
+  const perPair: PairEvaluation[] = [];
   let fundingApplied = 0;
   let liquidated = 0;
+  let settled = 0;
   let skippedStale = 0;
-
-  // Optionally publish the fresh perp price to the on-ledger oracle once per
-  // cycle (the market mark is shared across all pairs of this market).
-  let oraclePushed = false;
+  let skippedNoConfig = 0;
+  const pushedMarkets = new Set<string>();
 
   for (const pair of pairs) {
+    const evaluation = blankEval(pair);
+    const config = configByMarket.get(pair.market);
+    if (!config) {
+      evaluation.skippedNoConfig = true;
+      skippedNoConfig += 1;
+      perPair.push(evaluation);
+      continue;
+    }
+
     const perp = await prices.getPerpPrice(pair.market);
     const nav = await prices.getRwaNav(pair.collateralInstrument);
-
     const mark = perp.price;
     const index = perp.price; // MVP: mark = index.
+    evaluation.markPrice = mark;
+    evaluation.rwaNav = nav.price;
 
-    const evaluation: PairEvaluation = {
-      contractId: pair.contractId,
-      market: pair.market,
-      markPrice: mark,
-      rwaNav: nav.price,
-      longEquity: 0,
-      shortEquity: 0,
-      maintenanceMargin: 0,
-      fundingApplied: false,
-      fundingRate: null,
-      fundingPayment: null,
-      liquidated: false,
-      liquidatedSide: null,
-      skippedStale: false,
-    };
-
-    // Staleness guards (DEX.md §10.1): mark-stale halts funding + liquidation;
-    // NAV-stale is a soft skip (NAV feeds collateral value, can't act safely).
+    // Staleness guards (DEX.md §10.1).
     const markStale = now - perp.asOf > config.maxMarkStalenessSeconds;
     const navStale = now - nav.asOf > config.maxNavStalenessSeconds;
     if (markStale || navStale) {
@@ -94,17 +109,16 @@ export async function runTriggerCycle(deps: TriggerDeps): Promise<CycleResult> {
       continue;
     }
 
-    // Push the fresh, non-stale mark on-ledger once per cycle (before acting).
-    if (deps.pushPriceOnLedger && !oraclePushed) {
+    // Push the fresh, non-stale, signed mark on-ledger once per market per cycle.
+    if (deps.pushPriceOnLedger && !pushedMarkets.has(pair.market)) {
       await ledger.updateOraclePrice(perp);
-      oraclePushed = true;
+      pushedMarkets.add(pair.market);
     }
 
-    // Net funding received by the LONG so far (signed USDCx). The short's net
-    // funding is exactly the negation (DEX.md §5 / types.ts).
+    // Net funding received by the LONG so far (short's = negation; DEX.md §5).
     let netFundingLong = pair.accruedFundingLong;
 
-    // Funding (DEX.md §5) — applied BEFORE liquidation (DEX.md §7.4 / §10.1.3).
+    // Funding (DEX.md §5) — always before settle/liquidation (DEX.md §7.4).
     if (now - pair.lastFundingTime >= config.fundingIntervalSeconds) {
       const rate = risk.fundingRate(mark, index, config);
       const payment = risk.fundingPayment(rate, pair.size, index);
@@ -113,17 +127,16 @@ export async function runTriggerCycle(deps: TriggerDeps): Promise<CycleResult> {
         fundingPayment: payment,
         indexPrice: index,
         at: now,
+        signedReport: perp.signedReport,
       });
-      // Positive payment => long pays short => long's net funding decreases.
-      // Mirror MockLedger's mutation so liquidation uses the post-funding value.
-      netFundingLong = netFundingLong - payment;
+      netFundingLong = netFundingLong - payment; // positive payment => long pays.
       evaluation.fundingApplied = true;
       evaluation.fundingRate = rate;
       evaluation.fundingPayment = payment;
       fundingApplied += 1;
     }
 
-    // Liquidation (DEX.md §7) using the post-funding net funding.
+    // Equities (post-funding) for observability + the liquidation decision.
     const longCV = risk.collateralValue(pair.long.collateralQty, nav.price);
     const shortCV = risk.collateralValue(pair.short.collateralQty, nav.price);
     const longUPnL = risk.unrealizedPnl("Long", pair.size, pair.entryPrice, mark);
@@ -131,11 +144,32 @@ export async function runTriggerCycle(deps: TriggerDeps): Promise<CycleResult> {
     const longEq = risk.equity(longCV, longUPnL, netFundingLong);
     const shortEq = risk.equity(shortCV, shortUPnL, -netFundingLong);
     const mm = risk.maintenanceMargin(pair.size, mark, config.maintenanceMarginRate);
-
     evaluation.longEquity = longEq;
     evaluation.shortEquity = shortEq;
     evaluation.maintenanceMargin = mm;
 
+    // Close request takes priority over liquidation (DEX.md §8).
+    const close = closeByPair.get(pair.contractId);
+    if (close) {
+      const side = close.closingSide;
+      const realizedPnl = risk.realizedPnl(side, pair.size, pair.entryPrice, mark);
+      const netFunding = side === "Long" ? netFundingLong : -netFundingLong;
+      await ledger.settleClose(pair.contractId, {
+        closingSide: side,
+        exitPrice: mark,
+        realizedPnl,
+        netFunding,
+        at: now,
+        signedReport: perp.signedReport,
+      });
+      evaluation.settled = true;
+      evaluation.settledSide = side;
+      settled += 1;
+      perPair.push(evaluation);
+      continue;
+    }
+
+    // Liquidation (DEX.md §7).
     if (risk.isLiquidatable(longEq, mm)) {
       await ledger.liquidate(pair.contractId, {
         side: "Long",
@@ -143,6 +177,7 @@ export async function runTriggerCycle(deps: TriggerDeps): Promise<CycleResult> {
         equity: longEq,
         maintenanceMargin: mm,
         at: now,
+        signedReport: perp.signedReport,
       });
       evaluation.liquidated = true;
       evaluation.liquidatedSide = "Long";
@@ -154,6 +189,7 @@ export async function runTriggerCycle(deps: TriggerDeps): Promise<CycleResult> {
         equity: shortEq,
         maintenanceMargin: mm,
         at: now,
+        signedReport: perp.signedReport,
       });
       evaluation.liquidated = true;
       evaluation.liquidatedSide = "Short";
@@ -168,24 +204,22 @@ export async function runTriggerCycle(deps: TriggerDeps): Promise<CycleResult> {
     evaluated: perPair.length,
     fundingApplied,
     liquidated,
+    settled,
     skippedStale,
+    skippedNoConfig,
     perPair,
   };
 }
 
 /**
  * Thin wrapper that runs `runTriggerCycle` on a fixed interval. Guards against
- * overlapping runs with a `running` flag and swallows per-cycle errors (logged)
- * so a single bad cycle never kills the loop. The tests target
- * `runTriggerCycle` directly; this is for the live daemon.
+ * overlapping runs and swallows per-cycle errors so one bad cycle never kills the
+ * loop. Tests target `runTriggerCycle` directly; this is for the live daemon.
  */
-export function startTriggerLoop(
-  deps: TriggerDeps,
-  intervalMs: number,
-): { stop: () => void } {
+export function startTriggerLoop(deps: TriggerDeps, intervalMs: number): { stop: () => void } {
   let running = false;
   const timer = setInterval(async () => {
-    if (running) return; // skip if the previous cycle is still in flight.
+    if (running) return;
     running = true;
     try {
       await runTriggerCycle(deps);
@@ -195,8 +229,5 @@ export function startTriggerLoop(
       running = false;
     }
   }, intervalMs);
-
-  return {
-    stop: () => clearInterval(timer),
-  };
+  return { stop: () => clearInterval(timer) };
 }
