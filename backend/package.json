@@ -1,0 +1,21 @@
+{
+  "name": "perp-dex-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Person 3 track: Chainlink oracle feed + risk/trigger loop for the private perps DEX on Canton",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc -p tsconfig.json",
+    "fetch": "node --env-file-if-exists=.env src/fetchPrice.ts",
+    "start": "node --env-file-if-exists=.env src/liveChainlink.ts",
+    "live:chainlink": "node --env-file-if-exists=.env src/liveChainlink.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

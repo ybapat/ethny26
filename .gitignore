@@ -1,0 +1,17 @@
+# dependencies
+node_modules/
+
+# secrets / local env (NEVER commit credentials)
+.env
+.env.*
+!.env.example
+
+# Daml / build output
+.daml/
+dist/
+*.dar
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
