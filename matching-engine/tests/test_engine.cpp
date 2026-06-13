@@ -46,65 +46,6 @@ struct CapturedSubmit {
     std::string executionPrice;
 };
 
-class MockLedger final : public ILedgerClient {
-public:
-    // Each call to submitAndWait pops the next behaviour from the queue.
-    // Default (empty queue) = success.
-    struct Behaviour {
-        enum class Kind { Success, ContractNotFound, DuplicateCommand, Transient } kind;
-    };
-
-    std::vector<Behaviour>      queue;
-    std::vector<CapturedSubmit> submits;
-
-    nlohmann::json submitAndWait(const nlohmann::json& body) override {
-        // Capture what was submitted
-        const auto& cmd = body["commands"][0]["ExerciseCommand"];
-        CapturedSubmit s;
-        s.contractId     = cmd["contractId"].get<std::string>();
-        s.choice         = cmd["choice"].get<std::string>();
-        s.shortOrderCid  = cmd["choiceArgument"]["shortOrderCid"].get<std::string>();
-        s.fillSize       = cmd["choiceArgument"]["fillSize"].get<std::string>();
-        s.executionPrice = cmd["choiceArgument"]["executionPrice"].get<std::string>();
-        submits.push_back(s);
-
-        Behaviour beh = queue.empty()
-                        ? Behaviour{Behaviour::Kind::Success}
-                        : (queue.erase(queue.begin()), queue.empty()
-                              ? Behaviour{Behaviour::Kind::Success}
-                              : *queue.begin());
-        // Actually pop correctly:
-        // (Redo: pop from front of queue if non-empty)
-        return dispatch(beh);
-    }
-
-    int64_t getLedgerEnd() override { return 0; }
-
-    std::vector<nlohmann::json> getActiveOrders(int64_t) override {
-        return {};
-    }
-
-    void subscribeUpdates(int64_t, std::function<void(const nlohmann::json&)>) override {}
-
-private:
-    nlohmann::json dispatch(const Behaviour& b) {
-        switch (b.kind) {
-        case Behaviour::Kind::Success:
-            return {{"updateId", "tx1"}, {"completionOffset", 1}};
-        case Behaviour::Kind::ContractNotFound:
-            throw LedgerError("CONTRACT_NOT_FOUND", LedgerErrorCode::ContractNotFound, 404);
-        case Behaviour::Kind::DuplicateCommand:
-            throw LedgerError("DUPLICATE_COMMAND", LedgerErrorCode::DuplicateCommand, 409);
-        case Behaviour::Kind::Transient:
-            throw LedgerError("SERVICE_UNAVAILABLE", LedgerErrorCode::Unknown, 503);
-        }
-        return {};
-    }
-};
-
-// Fix the mock's pop logic — let's rewrite submitAndWait cleanly:
-// (The above has a logic bug — let's use a cleaner MockLedger)
-
 class MockLedger2 final : public ILedgerClient {
 public:
     using ThrowFn = std::function<void()>;

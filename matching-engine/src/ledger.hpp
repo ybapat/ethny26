@@ -1,5 +1,6 @@
 #pragma once
 #include "types.hpp"
+#include <boost/beast/http.hpp>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -62,14 +63,21 @@ public:
         std::function<void(const nlohmann::json&)> onFrame) override;
 
 private:
-    nlohmann::json httpPost(const std::string& path, const nlohmann::json& body);
-    nlohmann::json httpGet (const std::string& path);
+    template<typename Fn>    void           withStream(Fn fn) const;
+    nlohmann::json                          httpGet (const std::string& path) const;
+    nlohmann::json                          httpPost(const std::string& path,
+                                                     const nlohmann::json& body) const;
+    template<typename Body, typename Fields>
+    void addAuthHeader(boost::beast::http::request<Body, Fields>& req) const;
 
     std::string host_;
     std::string port_;
+    bool        useTls_;
+    std::string jwtToken_;
     std::string orderTemplateId_;
     std::string venueParty_;
     std::string userId_;
+    int         timeoutSecs_;
 };
 
 } // namespace dex
