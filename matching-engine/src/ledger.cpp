@@ -35,7 +35,9 @@ static LedgerErrorCode detectCode(const std::string& body, int httpStatus) {
 
 LedgerClient::LedgerClient(const EngineConfig& cfg)
     : host_(cfg.ledgerHost), port_(cfg.ledgerPort),
-      orderTemplateId_(cfg.orderTemplateId) {}
+      orderTemplateId_(cfg.orderTemplateId),
+      venueParty_(cfg.venueParty),
+      userId_(cfg.userId) {}
 
 // ── Synchronous HTTP helpers ───────────────────────────────────────────────
 
@@ -111,18 +113,23 @@ std::vector<nlohmann::json> LedgerClient::getActiveOrders(int64_t activeAtOffset
     // single JSON object with an "activeContracts" array — handle both.
     nlohmann::json reqBody = {
         {"activeAtOffset", activeAtOffset},
+        // readAs scopes the ACS to contracts visible to the venue party.
+        {"readAs",  {venueParty_}},
+        {"userId",  userId_},
         {"eventFormat", {
-            {"filtersForAnyParty", {
-                {"cumulative", {{
-                    {"identifierFilter", {
-                        {"TemplateFilter", {
-                            {"value", {
-                                {"templateId",             orderTemplateId_},
-                                {"includeCreatedEventBlob", false}
+            {"filtersByParty", {
+                {venueParty_, {
+                    {"cumulative", {{
+                        {"identifierFilter", {
+                            {"TemplateFilter", {
+                                {"value", {
+                                    {"templateId",              orderTemplateId_},
+                                    {"includeCreatedEventBlob", false}
+                                }}
                             }}
                         }}
-                    }}
-                }}}
+                    }}}
+                }}
             }},
             {"verbose", true}
         }}
@@ -196,23 +203,31 @@ void LedgerClient::subscribeUpdates(
     ws::stream<tcp::socket> wsStream{std::move(sock)};
     wsStream.handshake(host_, "/v2/updates");
 
-    // Send subscription frame (Canton v2 WS protocol: first client message = params)
+    // Send subscription frame (Canton v2 WS: first client message = subscription params).
+    // readAs tells the participant which party's view to use — without this, the
+    // sandbox returns no events because it doesn't know whose contracts to deliver.
     nlohmann::json subFrame = {
         {"beginExclusive", beginExclusive},
+        // readAs: the venue party — Canton will project only events where
+        // the venue is a stakeholder, which covers every Order (venue is signatory).
+        {"readAs",  {venueParty_}},
+        {"userId",  userId_},
         {"updateFormat", {
             {"includeTransactions", {
                 {"eventFormat", {
-                    {"filtersForAnyParty", {
-                        {"cumulative", {{
-                            {"identifierFilter", {
-                                {"TemplateFilter", {
-                                    {"value", {
-                                        {"templateId",              orderTemplateId_},
-                                        {"includeCreatedEventBlob", false}
+                    {"filtersByParty", {
+                        {venueParty_, {
+                            {"cumulative", {{
+                                {"identifierFilter", {
+                                    {"TemplateFilter", {
+                                        {"value", {
+                                            {"templateId",              orderTemplateId_},
+                                            {"includeCreatedEventBlob", false}
+                                        }}
                                     }}
                                 }}
-                            }}
-                        }}}
+                            }}}
+                        }}
                     }},
                     {"verbose", true}
                 }}

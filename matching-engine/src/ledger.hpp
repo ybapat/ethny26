@@ -68,6 +68,8 @@ private:
     std::string host_;
     std::string port_;
     std::string orderTemplateId_;
+    std::string venueParty_;
+    std::string userId_;
 };
 
 } // namespace dex
