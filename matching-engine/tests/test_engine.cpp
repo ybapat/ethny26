@@ -368,6 +368,54 @@ void test_partial_fill_then_residual_matches_next_short_via_ws() {
     ASSERT_TRUE(!book.hasOrder("L3"));
 }
 
+void test_self_trade_prevention() {
+    // Same trader on both sides → both orders removed, no MatchOrders submitted.
+    OrderBook book;
+    MockLedger2 ledger;
+    MatchingEngine eng(book, ledger, makeConfig());
+
+    auto longEv  = makeCreatedEvent("L1", "Long",  200.0, 10.0);
+    auto shortEv = makeCreatedEvent("S1", "Short", 200.0, 10.0);
+    // Give both the same trader.
+    longEv["createArguments"]["trader"]  = "Alice::1";
+    shortEv["createArguments"]["trader"] = "Alice::1";
+
+    eng.onOrderCreated(longEv);
+    eng.onOrderCreated(shortEv);
+
+    ASSERT_EQ((int)ledger.submits.size(), 0);  // no MatchOrders submitted
+    ASSERT_TRUE(!book.hasOrder("L1"));          // both evicted
+    ASSERT_TRUE(!book.hasOrder("S1"));
+}
+
+void test_self_trade_then_valid_cross() {
+    // After a self-trade is skipped, a valid cross from a different trader should match.
+    OrderBook book;
+    MockLedger2 ledger;
+    MatchingEngine eng(book, ledger, makeConfig());
+
+    auto l1 = makeCreatedEvent("L1", "Long",  200.0, 10.0);
+    l1["createArguments"]["trader"] = "Alice::1";
+
+    auto s1 = makeCreatedEvent("S1", "Short", 200.0, 10.0);
+    s1["createArguments"]["trader"] = "Alice::1";  // self-trade
+
+    auto s2 = makeCreatedEvent("S2", "Short", 200.0, 10.0);
+    s2["createArguments"]["trader"] = "Bob::2";    // valid counterparty
+
+    eng.onOrderCreated(l1);
+    eng.onOrderCreated(s1);   // self-trade with L1 → both removed, S2 not yet added
+    eng.onOrderCreated(s2);   // no long in book → no cross yet
+
+    // Now a new long from Alice arrives — should match Bob's short.
+    auto l2 = makeCreatedEvent("L2", "Long", 200.0, 10.0);
+    l2["createArguments"]["trader"] = "Alice::1";
+    eng.onOrderCreated(l2);
+
+    ASSERT_EQ((int)ledger.submits.size(), 1);
+    ASSERT_EQ(ledger.submits[0].shortOrderCid, std::string("S2"));
+}
+
 void test_template_id_mismatch_is_skipped() {
     OrderBook book;
     MockLedger2 ledger;
@@ -394,6 +442,8 @@ int main() {
     test_partial_fill_both_orders_removed_from_book();
     test_multiple_full_full_matches_drain_in_one_cycle();
     test_partial_fill_then_residual_matches_next_short_via_ws();
+    test_self_trade_prevention();
+    test_self_trade_then_valid_cross();
     test_template_id_mismatch_is_skipped();
 
     std::cout << "\nEngine tests: " << passed << " passed, " << failed << " failed\n";

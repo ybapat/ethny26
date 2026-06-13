@@ -68,6 +68,17 @@ int MatchingEngine::runMatchingCycle() {
         auto cross = book_.findCross();
         if (!cross) break;
 
+        // Self-trade prevention: the same trader on both sides produces a
+        // zero-sum fill that wastes a ledger round-trip and could be used
+        // to paint volume. Remove both and look for the next cross.
+        if (cross->longOrder.trader == cross->shortOrder.trader) {
+            std::cerr << "[engine] self-trade prevented for trader "
+                      << cross->longOrder.trader << " — removing both orders\n";
+            book_.removeOrder(cross->longOrder.contractId);
+            book_.removeOrder(cross->shortOrder.contractId);
+            continue;
+        }
+
         if (!submitMatch(*cross)) break;  // stale CID or exhausted retries
         applyFillToBook(*cross);
         ++matches;
