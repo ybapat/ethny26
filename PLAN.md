@@ -7,10 +7,11 @@
 A **private perpetual-futures DEX** on the Canton Network. Traders take leveraged long/short positions on a continuous underlying (**BTC/USD** index for the MVP), posting a **tokenized equity/ETF** as margin collateral instead of idle cash. Cash/settlement is a **USDC-backed stablecoin** (modeled as `USDCx` for the MVP). A perp has no expiry; it is anchored to the index by a periodic **funding rate** paid between longs and shorts.
 
 **Value props**
-1. **Privacy** — positions, collateral, and PnL are visible only to the two counterparties and the venue, with a **Regulator** party as observer for audit. Other traders are *not stakeholders*, so positions are invisible to them → no liquidation hunting, no copy-trading. Even the liquidation level is never exposed.
-2. **Productive collateral** — a tokenized RWA (equity/ETF) earns/holds value while serving as margin, vs. idle cash.
-3. **Atomic DvP settlement** — PnL settles delivery-vs-payment in a single all-or-nothing transaction.
-4. **Verifiable prices & backing** — Chainlink Data Streams (live natively on Canton) supply the index and collateral marks; Chainlink Proof of Reserve attests the RWA is backed before it is accepted.
+1. **Privacy** — orders, positions, collateral, and PnL are visible only to the two counterparties and the venue, with a **Regulator** party as observer for audit. Other traders are *not stakeholders*, so they are invisible → no liquidation hunting, no copy-trading, no order-book front-running. Even the liquidation level is never exposed.
+2. **Productive collateral, no haircut** — a tokenized, yield-bearing RWA earns yield while serving as margin (vs. idle cash) and is valued at **full oracle price with no haircut**, because the collateral whitelist is restricted to a stable, yield-bearing asset → full yield, zero leverage penalty.
+3. **Private orderbook + pure peer-to-peer** — liquidity is a **private orderbook** (only the venue sees it, to match); every fill binds one long to one short and settles directly between them. **No liquidity pool / AMM** acts as counterparty.
+4. **Atomic DvP settlement** — PnL settles delivery-vs-payment in a single all-or-nothing transaction, directly between the two matched traders.
+5. **Verifiable prices & backing** — Chainlink Data Streams (live natively on Canton) supply the index/marks; Chainlink Proof of Reserve + the stable-collateral whitelist gate the RWA before it is accepted.
 
 **Why Canton.** Canton's per-contract privacy (signatory/observer/controller with sub-transaction privacy) gives us *trader-level confidentiality by construction* — non-stakeholders "do not learn that the transaction happened" (live docs, verbatim). That is the core feature a public-chain perps DEX cannot offer. Canton also gives atomic multi-party transactions and a UTXO holding model via the CIP-0056 token standard.
 
@@ -66,9 +67,10 @@ Stakeholder convention for everything trader-facing: **signatories = {trader(s),
 
 | Template | Signatory | Observer | Key choices (controller) | Notes |
 |---|---|---|---|---|
-| **`Market`** | venue | Regulator | `OpenPosition` (trader), `ApplyFunding` (venue) | Config: `underlying` (BTC/USD feed id), `leverageCap`, `maintenanceMarginBps`, `fundingIntervalSeconds`, `oracleRef`. Long-lived. |
+| **`Market`** | venue | Regulator | `PlaceOrder` (trader), `ApplyFunding` (venue) | Config: `underlying` (BTC/USD feed id), `leverageCap`, `maintenanceMarginBps`, `fundingIntervalSeconds`, `oracleRef`, `collateralWhitelist`. Long-lived. (No haircut param.) |
+| **`Order`** (private, dark CLOB) | trader, venue | Regulator | `Cancel` (trader), `MatchOrders` (venue) | A resting limit order: `side`, `size`, `limitPrice`, `collateralAllocationCid`, `timeInForce`. Only the venue sees the book; other traders are **not** stakeholders → no front-running. |
 | **`PerpPosition`** | trader, venue | Regulator | `Mark` (venue), `RequestClose` (trader) | `side` (Long/Short), `size`, `entryPrice`, `leverage`, `collateralRef`, `lastFundingPrice`. Other traders are **not** stakeholders → invisible. |
-| **`MatchedPair`** | longTrader, shortTrader, venue | Regulator | `ApplyFunding` (venue), `Liquidate` (venue), `SettleClose` (venue) | Binds one long to one short (P2P). The unit funding/mark/liquidation/settlement act on. |
+| **`MatchedPair`** | longTrader, shortTrader, venue | Regulator | `ApplyFunding` (venue), `Liquidate` (venue), `SettleClose` (venue) | Binds one long to one short (**pure P2P**, no pool). The unit funding/mark/liquidation/settlement act on; PnL settles directly between the two traders. |
 | **`CollateralLock`** (wraps Token Standard) | trader, venue | Regulator | (released via Allocation choices) | RWA holding escrowed for a position. **Locking uses the Allocation workflow**, not a Holding choice (Holding has none). |
 | **`PriceOracle`** *(interface)* | — | — | `getPrice : (Decimal, Time)` | Satisfied by `MockOraclePrice` (MVP) and by a Chainlink-verified wrapper (stretch). Decouples mechanics from the price source. |
 | **`MockOraclePrice`** | oracle | venue, Regulator | `UpdatePrice` (oracle) | MVP fallback: holds `streamId`, `price`, `timestamp`. |
@@ -79,7 +81,7 @@ Stakeholder convention for everything trader-facing: **signatories = {trader(s),
 - **Allocation interface** `splice-api-token-allocation-v1` — drives (a) **locking collateral** against a position via `AllocationFactory_Allocate`, and (b) **atomic DvP settlement** of PnL on close. Settlement spec names an `executor` (the venue) + `allocateBefore`/`settleBefore` deadlines; the venue settles with `Allocation_ExecuteTransfer`; back-outs via `Allocation_Withdraw` / `Allocation_Cancel`.
 
 **Choices we write (custom mechanics):**
-- **Open / Match** — `Market.OpenPosition` creates a `PerpPosition` with collateral allocated/locked; venue pairs a long + short into a `MatchedPair` (MVP: we control both sides).
+- **Order / Match** — `Market.PlaceOrder` creates a private `Order` (collateral escrowed via Allocation; stakeholders {trader, venue, Regulator} only). The venue's matching engine reads the book (venue-only view) and, when a long crosses a short, exercises `MatchOrders` to atomically bind them into a `MatchedPair` at the maker price. **No pool** — liquidity is resting orders; the demo seeds one crossing long + short.
 - **Funding** — `MatchedPair.ApplyFunding`: reads the oracle, computes `fundingPayment = fundingRate * notional`, transfers it long↔short, archives + recreates the pair with updated `lastFundingPrice` (immutability ⇒ churn; applied at discrete intervals on demand for the demo).
 - **Mark** — `PerpPosition.Mark` / `MatchedPair`: `unrealizedPnL = (indexPrice − entryPrice) * size * side`.
 - **Liquidate** — `MatchedPair.Liquidate` (controller = venue): **verify the price** (mock or Chainlink `Verify`), **ASSERT** `collateralValue + unrealizedPnL < maintenanceMargin` (so a healthy trader *cannot* be liquidated), then atomically **unlock + seize** the RWA. Liquidation level is internal — never an observable field.
@@ -123,7 +125,7 @@ Stakeholder convention for everything trader-facing: **signatories = {trader(s),
 - Request Chainlink Data Streams access + VerifierConfig observer grant **now** (lead time). Init repo, `daml.yaml` (SDK 3.5.3), vendor token-standard `-v1` DARs, `daml start` runs. Allocate the 5 demo parties.
 
 **Sat AM — Core templates + mock oracle (4–5h)**
-- `Market`, `PerpPosition`, `MatchedPair`, `PriceOracle` interface, `MockOraclePrice`. `OpenPosition` + collateral lock via Allocation. Daml Script: open one long + one short, match into a pair. **Privacy assertion test**: an `outsider` party's ACS does not contain the position.
+- `Market`, `Order`, `PerpPosition`, `MatchedPair`, `PriceOracle` interface, `MockOraclePrice`. `PlaceOrder` + collateral escrow via Allocation; `MatchOrders` crosses long↔short. Daml Script: place one long + one short order, cross into a pair. **Privacy assertion test**: an `outsider` party's ACS contains neither the orders nor the position.
 
 **Sat PM — Mechanics (4–5h)**
 - `ApplyFunding`, `Mark`, `Liquidate` (verify price → assert breach → seize RWA), `RequestClose` + `SettleClose` (Allocation DvP in USDCx). Script-drive a full lifecycle: open → fund once → mark → **liquidate** (path A) and a parallel pair → **close+settle** (path B).
@@ -143,7 +145,7 @@ Stakeholder convention for everything trader-facing: **signatories = {trader(s),
 ## 7. Demo script (party-perspective switch)
 
 1. **Venue** opens the `Market` (BTC/USD), shows parameters.
-2. **Trader-long** and **trader-short** each open a position posting tokenized-equity collateral (PoR check passes); venue matches them into a `MatchedPair`.
+2. **Trader-long** and **trader-short** each place a private order posting stable yield-bearing RWA collateral (PoR + whitelist check passes); the venue's matching engine crosses them into a `MatchedPair` — peer-to-peer, no pool.
 3. **Outsider** view: refresh — *sees only the price feed, no positions exist for them.* ← privacy money-shot.
 4. **Regulator** view: sees **both** positions, collateral, and live PnL (observer) — audit without participation.
 5. Push the BTC price (mock/Chainlink). **Venue** runs **ApplyFunding** once → funding flows long↔short.
@@ -165,7 +167,7 @@ Stakeholder convention for everything trader-facing: **signatories = {trader(s),
 2. **V11 equities parser / PoR-on-Canton path / CRE→Canton write** — three items the docs do **not** fully confirm. *Mitigation:* MVP uses crypto V3 for marks, a mock `PoRAttestation`, and our own backend timer; treat all three as stretch and confirm with Chainlink.
 3. **No keepers** — funding/liquidation are externally triggered; for the demo, applied at discrete intervals on demand by the backend.
 4. **Immutable contracts / churn** — every funding tick/mark archives + recreates the position; fine at demo cadence, would need batching at scale.
-5. **P2P liquidity cold-start** — MVP controls both sides (one long, one short); no order book / matching engine.
+5. **Orderbook liquidity cold-start** — liquidity is a private orderbook with no pool, so it needs market makers posting both sides; the demo seeds one crossing long + short. Matching is operator-ordered (a documented centralization point) but the fill itself is an on-ledger atomic `MatchOrders` transaction. Tail/gap losses are counterparty-borne (no pool to socialize them), mitigated by maintenance-margin sizing + the stable-collateral whitelist.
 6. **Seaport vs. PQS/backend** — Seaport's web IDE abstracts away PQS and a custom backend. *Resolved:* develop locally with full PQS + backend, deploy only the DAR to Seaport for the live demo.
 7. **DevNet version drift** — confirm the *live* DevNet Splice/SDK numbers at build time (the official `cn-quickstart` `main` still pins older 3.4.11/0.5.3; use a 3.5-targeted branch or bump pins).
 
