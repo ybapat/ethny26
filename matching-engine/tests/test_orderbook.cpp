@@ -211,9 +211,10 @@ void test_after_full_fill_no_cross() {
     ASSERT_TRUE(!book.findCross().has_value());
 }
 
-void test_partial_fill_residual_can_cross_again() {
-    // Long 10, Short 6 → fill 6 (partial on long side).
-    // After fill, long residual (size 4) can match a new short (size 3).
+void test_partial_fill_both_removed_residual_via_new_cid() {
+    // After a partial fill the engine removes BOTH sides from the book.
+    // The Daml choice creates a NEW smaller Order with a fresh contract ID;
+    // the WS stream delivers that as a CreatedEvent — simulated here with "L1-r".
     OrderBook book;
     book.addOrder(makeOrder("L1", Side::Long,  P(200.0), S(10.0)));
     book.addOrder(makeOrder("S1", Side::Short, P(200.0), S(6.0)));
@@ -222,20 +223,40 @@ void test_partial_fill_residual_can_cross_again() {
     ASSERT_TRUE(cross1.has_value());
     ASSERT_EQ(cross1->fillSizeScaled, S(6.0));
 
-    // Simulate partial fill: remove S1 (fully filled), update L1 residual
-    book.removeOrder("S1");
+    // Engine removes both; no optimistic re-insert of residual (BUG-2 fix).
     book.removeOrder("L1");
-    Order residual = makeOrder("L1", Side::Long, P(200.0), S(4.0));
-    book.addOrder(residual);
-
-    // No cross without a new short
+    book.removeOrder("S1");
     ASSERT_TRUE(!book.findCross().has_value());
+    ASSERT_EQ(book.snapshot().longCount,  (size_t)0);
+    ASSERT_EQ(book.snapshot().shortCount, (size_t)0);
+
+    // WS delivers the residual as a NEW contract ("L1-r", size 4, fresh CID).
+    book.addOrder(makeOrder("L1-r", Side::Long, P(200.0), S(4.0)));
+    ASSERT_TRUE(!book.findCross().has_value());  // no short yet
 
     // New short arrives
     book.addOrder(makeOrder("S2", Side::Short, P(200.0), S(3.0)));
     auto cross2 = book.findCross();
     ASSERT_TRUE(cross2.has_value());
     ASSERT_EQ(cross2->fillSizeScaled, S(3.0));
+}
+
+void test_time_sort_correct_after_acs_recovery() {
+    // ACS recovery delivers orders in arbitrary order, not submission order.
+    // addOrder must insert by createdAtMs so FIFO ordering is correct even
+    // when older orders arrive after newer ones.
+    OrderBook book;
+    // Insert in REVERSE chronological order (simulating out-of-order ACS response).
+    book.addOrder(makeOrder("L3", Side::Long, P(200.0), S(5.0), 3000));
+    book.addOrder(makeOrder("L1", Side::Long, P(200.0), S(5.0), 1000));  // oldest
+    book.addOrder(makeOrder("L2", Side::Long, P(200.0), S(5.0), 2000));
+
+    // bestLong must be L1 (earliest createdAtMs = maker for this price level).
+    ASSERT_EQ(book.bestLong()->contractId, std::string("L1"));
+
+    // After L1 removed, L2 should become best.
+    book.removeOrder("L1");
+    ASSERT_EQ(book.bestLong()->contractId, std::string("L2"));
 }
 
 void test_snapshot_counts() {
@@ -282,7 +303,8 @@ int main() {
     test_execution_price_long_is_maker();
     test_execution_price_short_is_maker();
     test_after_full_fill_no_cross();
-    test_partial_fill_residual_can_cross_again();
+    test_partial_fill_both_removed_residual_via_new_cid();
+    test_time_sort_correct_after_acs_recovery();
     test_snapshot_counts();
     test_decimal_parsing_roundtrip();
 
