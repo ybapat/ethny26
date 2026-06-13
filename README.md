@@ -207,3 +207,18 @@ CANTON-RWA.md    ← ledger: JSON API, privacy, Token Standard, RWA yield, PQS, 
 - The npm client is **`@c7-digital/ledger`** (not `@c7/ledger`); `/v2/updates/flats` is removed in 3.5 (use `/v2/updates`). → CANTON-RWA.md §1, §8.
 
 When in doubt, the deep-dive doc for that layer is the source of truth, and its gap table tells you how confident to be.
+
+---
+
+## 9. Team split — 3 independent backend tracks
+
+Three parallel workstreams. 
+
+### Person 1 — Daml smart contracts + tests (the on-ledger core)
+- **Builds:** all the `.daml` — `Market`, `Order`, `PerpPosition`, `MatchedPair`, the `PriceOracle` interface + `MockOraclePrice`, collateral escrow via the Token Standard Allocation, `PoRAttestation`, and every choice (`PlaceOrder`, `MatchOrders`, `ApplyFunding`, `Mark`, `Liquidate`, `RequestClose`, `SettleClose`). Plus **Daml Script tests**: full lifecycle + the **privacy assertion test** (outsider's ACS is empty).
+
+### Person 2 — Matching engine (orderbook → MatchedPair)
+- **Builds:** the TS/Node service that reads resting `Order` contracts (via `/v2/updates` WS or PQS `active('…:Order')`), maintains the **in-memory book** (price-time priority, sorted sides + FIFO queues), finds crosses, and submits **`MatchOrders`**. Handles partial fills, cancel races (stale-CID → retry), and **crash recovery** (rebuild from `/v2/state/active-contracts`).
+
+### Person 3 — Oracle feed + risk / trigger loop (prices → funding / liquidation / settlement)
+- **Builds:** (a) the **price layer** — Chainlink Data Streams fetcher (REST/WS + HMAC) and the off-ledger feeder that posts prices to the on-ledger `MockOraclePrice` (real `Verify` path = stretch); (b) the **risk/trigger loop** — a timer that reads `MatchedPair`s, computes funding + PnL + the liquidation condition, and submits **`ApplyFunding` / `Mark` / `Liquidate`** and triggers **`SettleClose`**.
