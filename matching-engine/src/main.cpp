@@ -55,9 +55,12 @@ static std::pair<std::string, std::string> parseBaseUrl(const std::string& url) 
 
 static dex::EngineConfig loadConfig() {
     dex::EngineConfig cfg;
-    auto [host, port] = parseBaseUrl(requireEnv("LEDGER_BASE_URL"));
+    std::string baseUrl = requireEnv("LEDGER_BASE_URL");
+    auto [host, port]   = parseBaseUrl(baseUrl);
     cfg.ledgerHost        = host;
     cfg.ledgerPort        = port;
+    cfg.useTls            = (baseUrl.substr(0, 8) == "https://");
+    cfg.jwtToken          = optEnv("LEDGER_JWT_TOKEN", "");
     cfg.venueParty        = requireEnv("VENUE_PARTY");
     cfg.userId            = requireEnv("USER_ID");
     cfg.orderTemplateId   = requireEnv("ORDER_TEMPLATE_ID");
@@ -78,8 +81,17 @@ static bool processFrame(const nlohmann::json& frame,
     if (!g_running.load()) return false;
 
     // OffsetCheckpoint — update our resume point.
+    // Helper: Canton may return offset as int64 or as a string ("12345") depending
+    // on the Canton version. Handle both.
+    auto getOffset = [](const nlohmann::json& j) -> int64_t {
+        if (j.is_number_integer()) return j.get<int64_t>();
+        if (j.is_string())         return std::stoll(j.get<std::string>());
+        return -1;
+    };
+
     if (frame.contains("OffsetCheckpoint")) {
-        currentOffset = frame["OffsetCheckpoint"]["offset"].get<int64_t>();
+        int64_t off = getOffset(frame["OffsetCheckpoint"]["offset"]);
+        if (off >= 0) currentOffset = off;
         return true;
     }
 
@@ -87,7 +99,10 @@ static bool processFrame(const nlohmann::json& frame,
     if (!frame.contains("Transaction")) return true;
 
     const auto& tx = frame["Transaction"];
-    if (tx.contains("offset")) currentOffset = tx["offset"].get<int64_t>();
+    if (tx.contains("offset")) {
+        int64_t off = getOffset(tx["offset"]);
+        if (off >= 0) currentOffset = off;
+    }
 
     if (!tx.contains("events")) return true;
 
@@ -155,8 +170,11 @@ int main() {
         resumeOffset = 0;
     }
 
-    // ── WebSocket event loop (reconnects on any error) ────────────────────
-    static constexpr int kReconnectDelayMs = 2000;
+    // ── WebSocket event loop with exponential backoff reconnect ──────────
+    // Back-off: 1s → 2s → 4s → … capped at 60s. Resets to 1s on success.
+    static constexpr int kBackoffInitMs = 1000;
+    static constexpr int kBackoffMaxMs  = 60000;
+    int     backoffMs     = kBackoffInitMs;
     int64_t currentOffset = resumeOffset;
 
     while (g_running.load()) {
@@ -164,17 +182,19 @@ int main() {
             ledger.subscribeUpdates(currentOffset,
                 [&](const nlohmann::json& frame) {
                     processFrame(frame, engine, cfg, currentOffset);
-                    if (!g_running.load()) {
-                        // Throw to break out of the blocking read loop.
+                    if (!g_running.load())
                         throw std::runtime_error("shutdown requested");
-                    }
                 });
+            // subscribeUpdates returned cleanly (shouldn't happen unless we throw
+            // for shutdown above). Reset backoff.
+            backoffMs = kBackoffInitMs;
         } catch (const std::exception& e) {
             if (!g_running.load()) break;
             std::cerr << "[main] WS error: " << e.what()
-                      << " — reconnecting in " << kReconnectDelayMs << "ms "
-                      << "(offset=" << currentOffset << ")\n";
-            std::this_thread::sleep_for(std::chrono::milliseconds(kReconnectDelayMs));
+                      << " — reconnecting in " << backoffMs << "ms"
+                      << " (offset=" << currentOffset << ")\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
+            backoffMs = std::min(backoffMs * 2, kBackoffMaxMs);
         }
     }
 

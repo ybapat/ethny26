@@ -68,6 +68,17 @@ int MatchingEngine::runMatchingCycle() {
         auto cross = book_.findCross();
         if (!cross) break;
 
+        // Self-trade prevention: the same trader on both sides produces a
+        // zero-sum fill that wastes a ledger round-trip and could be used
+        // to paint volume. Remove both and look for the next cross.
+        if (cross->longOrder.trader == cross->shortOrder.trader) {
+            std::cerr << "[engine] self-trade prevented for trader "
+                      << cross->longOrder.trader << " — removing both orders\n";
+            book_.removeOrder(cross->longOrder.contractId);
+            book_.removeOrder(cross->shortOrder.contractId);
+            continue;
+        }
+
         if (!submitMatch(*cross)) break;  // stale CID or exhausted retries
         applyFillToBook(*cross);
         ++matches;
@@ -150,27 +161,21 @@ bool MatchingEngine::submitMatch(const Cross& cross) {
 }
 
 void MatchingEngine::applyFillToBook(const Cross& cross) {
-    // Remove both orders from the book. For partial fills we re-insert the
-    // residual — the WS stream will separately deliver the archive of the
-    // original and the create of the remainder, but those events are idempotent
-    // so the net result is correct either way.
-
-    const bool longFullFill  = cross.longOrder.sizeScaled  == cross.fillSizeScaled;
-    const bool shortFullFill = cross.shortOrder.sizeScaled == cross.fillSizeScaled;
-
+    // Always remove both orders, even on a partial fill. Never re-insert
+    // the residual here.
+    //
+    // Why: the Daml MatchOrders choice archives both original Order contracts
+    // and creates a NEW, smaller Order with a FRESH contract ID for the residual.
+    // If we re-inserted the residual under the OLD contract ID, the next match
+    // cycle would submit MatchOrders with that stale CID → CONTRACT_NOT_FOUND →
+    // the cancel-race handler removes it permanently, silently losing the order.
+    //
+    // Correct flow: remove both here; the WS stream delivers a CreatedEvent for
+    // the residual (new CID), which onOrderCreated inserts and then triggers a
+    // fresh match cycle. runMatchingCycle's while-loop naturally exits after a
+    // partial fill because no resting orders remain to cross.
     book_.removeOrder(cross.longOrder.contractId);
     book_.removeOrder(cross.shortOrder.contractId);
-
-    if (!longFullFill) {
-        Order residual          = cross.longOrder;
-        residual.sizeScaled    -= cross.fillSizeScaled;
-        book_.addOrder(residual);
-    }
-    if (!shortFullFill) {
-        Order residual          = cross.shortOrder;
-        residual.sizeScaled    -= cross.fillSizeScaled;
-        book_.addOrder(residual);
-    }
 }
 
 } // namespace dex

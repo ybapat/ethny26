@@ -80,6 +80,8 @@ struct Cross {
 struct EngineConfig {
     std::string ledgerHost;           // "localhost"
     std::string ledgerPort;           // "7575"
+    bool        useTls{false};        // true when LEDGER_BASE_URL starts with "https://"
+    std::string jwtToken;             // optional; set from LEDGER_JWT_TOKEN for DevNet
     std::string venueParty;
     std::string userId;
     std::string orderTemplateId;      // "perp-dex:PerpDex:Order"

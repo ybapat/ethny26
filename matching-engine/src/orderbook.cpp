@@ -3,14 +3,24 @@
 
 namespace dex {
 
+// Insert `o` into `dq` in ascending createdAtMs order (FIFO within same ms).
+// std::upper_bound ensures ties land AFTER existing same-timestamp entries.
+// Critical for correctness after ACS recovery, where orders arrive in
+// arbitrary order rather than the chronological order they were submitted.
+static void insertSorted(std::deque<Order>& dq, const Order& o) {
+    auto it = std::upper_bound(dq.begin(), dq.end(), o.createdAtMs,
+        [](int64_t ts, const Order& a) { return ts < a.createdAtMs; });
+    dq.insert(it, o);
+}
+
 bool OrderBook::addOrder(const Order& o) {
     if (index_.count(o.contractId)) return false;  // already present — idempotent
 
     if (o.side == Side::Long) {
-        bids_[o.priceScaled].push_back(o);
+        insertSorted(bids_[o.priceScaled], o);
         ++longCount_;
     } else {
-        asks_[o.priceScaled].push_back(o);
+        insertSorted(asks_[o.priceScaled], o);
         ++shortCount_;
     }
     index_[o.contractId] = {o.side, o.priceScaled};
