@@ -1,0 +1,10 @@
+sdk-version: 3.4.11
+name: perp-dex-tests
+version: 1.0.0
+source: daml
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script
+data-dependencies:
+  - ../daml/.daml/dist/perp-dex-1.0.0.dar

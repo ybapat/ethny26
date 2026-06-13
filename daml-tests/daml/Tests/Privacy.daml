@@ -1,0 +1,198 @@
+-- Privacy and liquidation tests.
+--
+-- test_outsider_blind              — Canton money-shot: outsider's ACS is empty.
+--                                    Regulator (observer) sees everything.
+-- test_liquidation_succeeds        — breaching long is liquidated; short wins.
+-- test_liquidation_healthy_must_fail — submitMustFail proves healthy position
+--                                    rejected (DEX.md §7.4 requirement).
+-- test_liquidation_short_breaches  — symmetric case for the short side.
+-- test_short_healthy_must_fail     — symmetric healthy-must-fail for short.
+-- test_request_close               — trader archives PerpPosition on close signal.
+module Tests.Privacy where
+
+import Daml.Script
+import DA.Assert (assertMsg)
+import DA.Time (hours, addRelTime)
+import PerpDex.Oracle
+import PerpDex.Types
+import PerpDex.Core
+import Tests.Lifecycle (setupWorld, openPosition, World(..))
+
+-- ─── test_outsider_blind ──────────────────────────────────────────────────────
+-- Canton guarantee: a party with no stakeholder role on a contract cannot see it
+-- in their ACS, cannot fetch it by CID, and cannot learn it exists.
+-- This test asserts the invariant for MatchedPair, PerpPosition, and Order.
+
+test_outsider_blind : Script ()
+test_outsider_blind = do
+  w <- setupWorld
+
+  (pairCid, longPosCid, shortPosCid) <- openPosition w 2.0 2.0
+
+  -- Outsider has no role on any of these contracts
+  outsiderPairs     <- query @MatchedPair  w.outsider
+  outsiderPositions <- query @PerpPosition w.outsider
+  outsiderOrders    <- query @Order        w.outsider
+  assertMsg "outsider sees no MatchedPair"   (null outsiderPairs)
+  assertMsg "outsider sees no PerpPosition"  (null outsiderPositions)
+  assertMsg "outsider sees no Order"         (null outsiderOrders)
+
+  outsiderByID <- queryContractId @MatchedPair w.outsider pairCid
+  assertMsg "outsider cannot fetch MatchedPair by CID" (outsiderByID == None)
+
+  -- Regulator (observer on MatchedPair) sees the pair
+  regPairs <- query @MatchedPair w.regulator
+  assertMsg "Regulator sees the MatchedPair (audit)" (not (null regPairs))
+
+  -- Both traders see the MatchedPair (they are signatories)
+  longSeePair  <- queryContractId @MatchedPair w.long  pairCid
+  shortSeePair <- queryContractId @MatchedPair w.short pairCid
+  assertMsg "long sees MatchedPair"  (longSeePair  /= None)
+  assertMsg "short sees MatchedPair" (shortSeePair /= None)
+
+  -- Each trader sees only their own PerpPosition, NOT the counterparty's
+  longPositions  <- query @PerpPosition w.long
+  shortPositions <- query @PerpPosition w.short
+  assertMsg "long sees their PerpPosition"  (not (null longPositions))
+  assertMsg "short sees their PerpPosition" (not (null shortPositions))
+
+  shortSeesLongPos <- queryContractId @PerpPosition w.short longPosCid
+  longSeesShortPos <- queryContractId @PerpPosition w.long  shortPosCid
+  assertMsg "short cannot see long's PerpPosition"  (shortSeesLongPos == None)
+  assertMsg "long cannot see short's PerpPosition"  (longSeesShortPos == None)
+
+  return ()
+
+-- ─── test_liquidation_succeeds ────────────────────────────────────────────────
+-- Mark drops to $188 → long is underwater:
+--   CollVal = 2.0 * $520 = $1,040;  UPnL = (188-200)*50 = -$600
+--   Equity  = $440;  MM = 50*188*5% = $470
+--   $440 < $470 → liquidatable ✓
+
+test_liquidation_succeeds : Script ()
+test_liquidation_succeeds = do
+  w <- setupWorld
+
+  (pairCid, _, _) <- openPosition w 2.0 2.0
+
+  now <- getTime
+  [(oracleCid, _)] <- query @MockOraclePrice w.oracle
+  submit w.oracle do
+    exerciseCmd oracleCid UpdatePrice with
+      newPrice = 188.0; newTimestamp = now
+
+  (settleCid, surplusCid) <- submit w.venue do
+    exerciseCmd pairCid Liquidate with
+      breachingSide = Long
+
+  settleResult <- queryContractId @Settlement w.venue settleCid
+  case settleResult of
+    None -> assertMsg "Settlement missing after liquidation" False
+    Some s -> do
+      assertMsg "winner is short (solvent side)" (s.winner == w.short)
+      assertMsg "loser is long (breaching side)" (s.loser  == w.long)
+      assertMsg "reason is Liquidation"           (s.reason == "Liquidation")
+      assertMsg "short received some collateral"  (s.collateralAmt > 0.0)
+
+  -- Long gets back surplus above what short is owed (long is not totally wiped out)
+  case surplusCid of
+    None -> assertMsg "expected a surplus settlement" False
+    Some cid -> do
+      surplusResult <- queryContractId @Settlement w.venue cid
+      case surplusResult of
+        None -> assertMsg "surplus Settlement missing" False
+        Some s -> assertMsg "surplus reason correct" (s.reason == "LiquidationSurplus")
+
+  -- MatchedPair is archived
+  pairAfter <- queryContractId @MatchedPair w.venue pairCid
+  assertMsg "MatchedPair archived after liquidation" (pairAfter == None)
+
+  return ()
+
+-- ─── test_liquidation_healthy_must_fail ───────────────────────────────────────
+-- Mark stays at $200 → long is healthy:
+--   Equity = $1,040;  MM = 50*200*5% = $500;  $1,040 > $500 → reject.
+-- This is the on-ledger ASSERT requirement from DEX.md §7.4.
+
+test_liquidation_healthy_must_fail : Script ()
+test_liquidation_healthy_must_fail = do
+  w <- setupWorld
+
+  (pairCid, _, _) <- openPosition w 2.0 2.0
+
+  submitMustFail w.venue do
+    exerciseCmd pairCid Liquidate with
+      breachingSide = Long
+
+  return ()
+
+-- ─── test_liquidation_short_breaches ──────────────────────────────────────────
+-- Mark rises to $213 → short breaches:
+--   UPnL_short = (200-213)*50 = -$650;  Equity = $390;  MM = $532.5
+--   $390 < $532.5 → short liquidatable ✓
+
+test_liquidation_short_breaches : Script ()
+test_liquidation_short_breaches = do
+  w <- setupWorld
+
+  (pairCid, _, _) <- openPosition w 2.0 2.0
+
+  now <- getTime
+  [(oracleCid, _)] <- query @MockOraclePrice w.oracle
+  submit w.oracle do
+    exerciseCmd oracleCid UpdatePrice with
+      newPrice = 213.0; newTimestamp = now
+
+  (settleCid, _) <- submit w.venue do
+    exerciseCmd pairCid Liquidate with
+      breachingSide = Short
+
+  settleResult <- queryContractId @Settlement w.venue settleCid
+  case settleResult of
+    None -> assertMsg "Settlement missing after short liquidation" False
+    Some s -> assertMsg "winner is long (solvent side)" (s.winner == w.long)
+
+  return ()
+
+-- ─── test_short_healthy_must_fail ─────────────────────────────────────────────
+-- Mark rises to $205; short still healthy:
+--   Equity = $1,040 + (200-205)*50 = $790;  MM = 50*205*5% = $512.5 → reject.
+
+test_short_healthy_must_fail : Script ()
+test_short_healthy_must_fail = do
+  w <- setupWorld
+
+  (pairCid, _, _) <- openPosition w 2.0 2.0
+
+  now <- getTime
+  [(oracleCid, _)] <- query @MockOraclePrice w.oracle
+  submit w.oracle do
+    exerciseCmd oracleCid UpdatePrice with
+      newPrice = 205.0; newTimestamp = now
+
+  submitMustFail w.venue do
+    exerciseCmd pairCid Liquidate with
+      breachingSide = Short
+
+  return ()
+
+-- ─── test_request_close ───────────────────────────────────────────────────────
+-- Trader archives their PerpPosition to signal close intent.
+-- The venue's risk loop detects the archive off-chain and calls SettleClose.
+
+test_request_close : Script ()
+test_request_close = do
+  w <- setupWorld
+
+  (pairCid, longPosCid, _) <- openPosition w 2.0 2.0
+
+  submit w.long do exerciseCmd longPosCid RequestClose
+
+  posAfter <- queryContractId @PerpPosition w.long longPosCid
+  assertMsg "PerpPosition archived after RequestClose" (posAfter == None)
+
+  -- MatchedPair is still live (venue hasn't settled yet)
+  pairStillLive <- queryContractId @MatchedPair w.venue pairCid
+  assertMsg "MatchedPair still live, awaiting venue SettleClose" (pairStillLive /= None)
+
+  return ()

@@ -1,0 +1,442 @@
+-- Core DEX templates: Market, Order, PerpPosition, MatchedPair, Settlement.
+-- Privacy convention (DEX.md §0):
+--   signatories = { involved traders, venue }
+--   observer    = { Regulator }
+--   outsiders have no stakeholder role → contracts are invisible to them.
+--
+-- Oracle contracts are looked up by contract key (not stored CID), so choices
+-- always read the latest price after UpdatePrice / UpdateNAV calls.
+--
+-- Collateral is tracked as Decimal quantities (simplified for MVP).
+-- Replace Settlement creation with Splice Token Standard Allocation_ExecuteTransfer
+-- when integrating the full Token Standard (CANTON-RWA.md §3).
+module PerpDex.Core where
+
+import DA.Time (subTime, convertRelTimeToMicroseconds, hours, minutes)
+import PerpDex.Oracle
+import PerpDex.Types
+
+-- ─── Settlement ───────────────────────────────────────────────────────────────
+-- Records a P2P payout.  In production this is replaced by atomic DvP via
+-- Allocation_ExecuteTransfer (CANTON-RWA.md §3 / DEX.md §8).
+
+template Settlement
+  with
+    venue           : Party
+    regulator       : Party
+    winner          : Party
+    loser           : Party
+    collateralAmt   : Decimal   -- RWA tokens credited to winner
+    collateralAsset : Text
+    reason          : Text      -- "Close" | "Liquidation" | "LiquidationSurplus"
+  where
+    signatory venue
+    observer  winner, loser, regulator
+
+-- ─── Market ───────────────────────────────────────────────────────────────────
+-- Venue-owned config contract.  Oracle operators are stored by party
+-- (not CID) so PlaceOrder always fetches the latest oracle state via key.
+
+template Market
+  with
+    venue                : Party
+    regulator            : Party
+    underlying           : Text      -- price feed assetId, e.g. "ETH/USD"
+    leverageCap          : Decimal   -- max allowed leverage (= 1/IMR_min)
+    maintenanceMarginBps : Int       -- MMR in bps; IMR = 2*MMR (e.g. 500 → 5% MMR, 10% IMR)
+    fundingIntervalSecs  : Int       -- funding cadence in seconds (demo: 3600)
+    collateralWhitelist  : [Text]    -- approved RWA asset ids; replaces the haircut
+    liqPenaltyBps        : Int       -- liquidation penalty bps (e.g. 50 = 0.5%)
+    oracleOperator       : Party     -- party running MockOraclePrice for 'underlying'
+    rwaOperator          : Party     -- party running RWAOracleFeed
+    porOperator          : Party     -- party running PoRAttestation
+  where
+    signatory venue
+    observer  regulator
+
+    -- Trader entry point.  Validates whitelist + PoR + NAV freshness + IM,
+    -- then creates an Order (signatories {trader, venue}).
+    -- Authority chain: controller trader + Market signatory venue → combined
+    -- authority {trader, venue} sufficient to create Order and to fetchByKey
+    -- oracle contracts (venue is observer of all oracle templates).
+    choice PlaceOrder : ContractId Order
+        with
+          trader                  : Party
+          side                    : Side
+          size                    : Decimal
+          limitPrice              : Decimal
+          collateralQty           : Decimal
+          collateralAssetId       : Text
+          -- MVP: pass "" for now; real value = AllocationV1 CID from Splice Token Standard
+          collateralAllocationCid : Text
+          timeInForce             : TimeInForce
+          expiresAt               : Time
+      controller trader
+      do
+        -- Collateral whitelist gate (replaces haircut; DEX.md §6)
+        assertMsg "collateral not on whitelist" (collateralAssetId `elem` collateralWhitelist)
+
+        -- Proof-of-Reserve gate: fetchByKey always returns the latest attestation
+        (_, por) <- fetchByKey @PoRAttestation (porOperator, collateralAssetId)
+        now <- getTime
+        let porAgeMicros = convertRelTimeToMicroseconds (subTime now por.lastAttestedAt)
+            porMaxMicros = convertRelTimeToMicroseconds (hours 25)
+        assertMsg "PoR: attestation is stale (> 25 h)" (porAgeMicros <= porMaxMicros)
+        assertMsg "PoR: reserves < issued supply"       (por.reserveAmt >= por.issuedSupply)
+
+        -- RWA NAV freshness (≤ 60 min; DEX.md §10.1)
+        (_, rwaNAV) <- fetchByKey @RWAOracleFeed (rwaOperator, collateralAssetId)
+        let navAgeMicros = convertRelTimeToMicroseconds (subTime now rwaNAV.timestamp)
+            navMaxMicros = convertRelTimeToMicroseconds (minutes 60)
+        assertMsg "RWA NAV price is stale (> 60 min)" (navAgeMicros <= navMaxMicros)
+
+        -- Initial margin check; no haircut: CollateralValue = qty * navPerUnit (DEX.md §3.1)
+        let collateralValue = collateralQty * rwaNAV.navPerUnit
+            imRequired      = initialMargin size limitPrice maintenanceMarginBps
+        assertMsg "insufficient collateral for initial margin" (collateralValue >= imRequired)
+
+        create Order with
+          trader; venue; regulator
+          marketCid = self
+          side; size; limitPrice
+          collateralQty; collateralAssetId
+          collateralAllocationCid; timeInForce
+          createdAt = now; expiresAt
+
+-- ─── Order ────────────────────────────────────────────────────────────────────
+-- Resting limit order.  Only {trader, venue, Regulator} are stakeholders →
+-- no other trader can see this order (private/dark CLOB, DEX.md §3.1).
+
+template Order
+  with
+    trader                  : Party
+    venue                   : Party
+    regulator               : Party
+    marketCid               : ContractId Market
+    side                    : Side
+    size                    : Decimal        -- remaining unfilled size
+    limitPrice              : Decimal        -- USDCx limit price
+    collateralQty           : Decimal        -- collateral escrowed for this order
+    collateralAssetId       : Text
+    -- MVP placeholder; real version = ContractId AllocationV1 (CANTON-RWA.md §3)
+    collateralAllocationCid : Text
+    timeInForce             : TimeInForce    -- serialised {"GTC":{}} etc → C++ contains() check
+    createdAt               : Time
+    expiresAt               : Time
+  where
+    signatory trader, venue
+    observer  regulator
+
+    -- Trader cancels; escrowed collateral is released
+    choice Cancel : ()
+      controller trader
+      do return ()
+
+    -- Venue-only: consume the counterparty order during matching without
+    -- needing the counterparty's key in actAs.  Authority flows from venue
+    -- being a signatory of both Orders.
+    choice ConsumeForMatch : ()
+      controller venue
+      do return ()
+
+    -- Venue crosses this order (always the LONG order) with shortOrderCid.
+    -- Choice arg names match the C++ engine's choiceArgument JSON exactly:
+    --   { "shortOrderCid": "...", "fillSize": "...", "executionPrice": "..." }
+    -- Authority chain: MatchOrders (controller venue) on long Order (sigs {longTrader, venue})
+    --   + ConsumeForMatch on short Order (sigs {shortTrader, venue})
+    --   → combined {longTrader, shortTrader, venue} → can create MatchedPair.
+    choice MatchOrders
+        : (ContractId MatchedPair, ContractId PerpPosition, ContractId PerpPosition)
+        with
+          shortOrderCid  : ContractId Order   -- the SHORT order being matched against
+          executionPrice : Decimal            -- maker's limit price (price-time priority)
+          fillSize       : Decimal            -- fill size; may be < either order (partial fill)
+      controller venue
+      do
+        counter <- fetch shortOrderCid
+
+        assertMsg "this order must be Long"    (side == Long)
+        assertMsg "counter must be Short"      (counter.side == Short)
+        assertMsg "collateral assets must match" (collateralAssetId == counter.collateralAssetId)
+        assertMsg "fillSize <= long order"     (fillSize <= size)
+        assertMsg "fillSize <= short order"    (fillSize <= counter.size)
+
+        -- Cross condition: long.limitPrice >= short.limitPrice (DEX.md §3.2)
+        assertMsg "orders do not cross: long.limit < short.limit" (limitPrice >= counter.limitPrice)
+        assertMsg "executionPrice outside [short.limit, long.limit]"
+          (executionPrice >= counter.limitPrice && executionPrice <= limitPrice)
+
+        -- Consume the short order (venue is signatory on both)
+        exercise shortOrderCid ConsumeForMatch
+        -- self (long order) is archived automatically as this is a consuming choice
+
+        now <- getTime
+        market <- fetch marketCid
+
+        let longTrader  = trader
+            shortTrader = counter.trader
+            longCollQty  = collateralQty
+            shortCollQty = counter.collateralQty
+
+        pairCid <- create MatchedPair with
+          longTrader; shortTrader; venue; regulator
+          size               = fillSize
+          entryPrice         = executionPrice
+          longCollateralQty  = longCollQty
+          shortCollateralQty = shortCollQty
+          collateralAssetId
+          accruedFundingLong  = 0.0
+          openedAt            = now
+          lastFundingTime     = now
+          oracleOperator      = market.oracleOperator
+          underlying          = market.underlying
+          rwaOperator         = market.rwaOperator
+          maintenanceMarginBps = market.maintenanceMarginBps
+          fundingIntervalSecs  = market.fundingIntervalSecs
+          liqPenaltyBps        = market.liqPenaltyBps
+
+        longPosCid <- create PerpPosition with
+          trader   = longTrader; venue; regulator
+          side     = Long
+          matchedPairCid = pairCid
+          size           = fillSize
+          entryPrice     = executionPrice
+          collateralQty  = longCollQty
+          collateralAssetId
+
+        shortPosCid <- create PerpPosition with
+          trader   = shortTrader; venue; regulator
+          side     = Short
+          matchedPairCid = pairCid
+          size           = fillSize
+          entryPrice     = executionPrice
+          collateralQty  = shortCollQty
+          collateralAssetId
+
+        return (pairCid, longPosCid, shortPosCid)
+
+-- ─── PerpPosition ─────────────────────────────────────────────────────────────
+-- Per-trader view of their side of a MatchedPair.
+-- Privacy: only {trader, venue, Regulator} are stakeholders.
+-- The counterparty is NOT a stakeholder → each trader's position is invisible
+-- to the other (Canton sub-transaction privacy, CANTON-RWA.md §2).
+
+template PerpPosition
+  with
+    trader            : Party
+    venue             : Party
+    regulator         : Party
+    side              : Side
+    matchedPairCid    : ContractId MatchedPair
+    size              : Decimal
+    entryPrice        : Decimal
+    collateralQty     : Decimal
+    collateralAssetId : Text
+  where
+    signatory trader, venue
+    observer  regulator
+
+    -- Trader signals close intent by archiving their PerpPosition on-ledger.
+    -- The venue's risk loop detects the archive off-chain and calls MatchedPair.SettleClose.
+    -- After SettleClose / Liquidate the surviving PerpPosition (if any) is orphaned;
+    -- the backend filters by matchedPairCid active status.
+    -- In production: create a signed CloseRequest the venue must honour.
+    choice RequestClose : ()
+      controller trader
+      do return ()
+
+-- ─── MatchedPair ──────────────────────────────────────────────────────────────
+-- The bilateral contract binding exactly one long and one short.
+-- Signatories: {longTrader, shortTrader, venue} — all three authorised at creation.
+-- Observer:    {Regulator}  — audit-only, never a controller.
+-- Outsiders: no stakeholder role → ACS query returns empty (see Privacy test).
+--
+-- Oracle operators are stored by party + assetId (not CID) so every choice
+-- calls fetchByKey to get the latest price, resolving the stale-CID issue.
+--
+-- Collateral quantities are authoritative; ApplyFunding settles funding by
+-- adjusting them, so equity checks only need:  E = collQty * nav + UPnL.
+
+template MatchedPair
+  with
+    longTrader           : Party
+    shortTrader          : Party
+    venue                : Party
+    regulator            : Party
+    size                 : Decimal        -- position size (units of underlying)
+    entryPrice           : Decimal        -- execution price (USDCx)
+    longCollateralQty    : Decimal        -- long's RWA collateral; adjusted by funding
+    shortCollateralQty   : Decimal        -- short's RWA collateral
+    collateralAssetId    : Text
+    accruedFundingLong   : Decimal        -- cumulative paid BY long (for auditing)
+    openedAt             : Time           -- when the pair was created (used by backend)
+    lastFundingTime      : Time
+    oracleOperator       : Party          -- key: (oracleOperator, underlying)
+    underlying           : Text           -- e.g. "ETH/USD"
+    rwaOperator          : Party          -- key: (rwaOperator, collateralAssetId)
+    maintenanceMarginBps : Int
+    fundingIntervalSecs  : Int
+    liqPenaltyBps        : Int
+  where
+    signatory longTrader, shortTrader, venue
+    observer  regulator
+
+    -- ── ApplyFunding ─────────────────────────────────────────────────────────
+    -- Venue calls once per fundingIntervalSecs.
+    -- F = clamp(0.3*(mark-index)/index + 0.0001, -0.0075, +0.0075) per hour
+    -- MVP: mark ≡ index, so F ≈ +0.0001 (slight positive drift, longs pay shorts)
+    -- FundingPayment = F * size * index  (DEX.md §5)
+    -- Funding is settled by adjusting collateral quantities.
+    -- Archives + recreates pair (Daml immutability → CID changes each tick).
+    choice ApplyFunding : ContractId MatchedPair
+      controller venue
+      do
+        now <- getTime
+
+        -- fetchByKey always returns the latest price after any UpdatePrice call
+        (_, oracle) <- fetchByKey @MockOraclePrice (oracleOperator, underlying)
+        (_, rwaNAV) <- fetchByKey @RWAOracleFeed   (rwaOperator, collateralAssetId)
+
+        -- Staleness guard: mark must be < 5 min old (DEX.md §10.1)
+        let markAge    = convertRelTimeToMicroseconds (subTime now oracle.timestamp)
+            maxMarkAge = convertRelTimeToMicroseconds (minutes 5)
+        assertMsg "mark price is stale (> 5 min)" (markAge <= maxMarkAge)
+
+        let mark  = oracle.price
+            index = oracle.price          -- MVP: mark ≡ index
+            nav   = rwaNAV.navPerUnit
+
+        let f              = clampD (-0.0075) 0.0075
+                               (0.3 * (mark - index) / index + 0.0001)
+            fundingPayment = f * size * index   -- positive → long pays short
+
+        let longDelta  = fundingPayment / nav    -- long loses tokens if F > 0
+            shortDelta = -(fundingPayment / nav)
+
+        create this with
+          longCollateralQty  = longCollateralQty  - longDelta
+          shortCollateralQty = shortCollateralQty - shortDelta
+          accruedFundingLong = accruedFundingLong + fundingPayment
+          lastFundingTime    = now
+
+    -- ── Liquidate ─────────────────────────────────────────────────────────────
+    -- Venue liquidates the breaching side when E < MM.
+    -- ASSERTS breach — submitMustFail on a healthy position must pass (DEX.md §7.4).
+    -- P2P payout (no pool — DEX.md §7.3):
+    --   solventGain    = UPnL of solvent side at mark (bounded below by 0)
+    --   paidToSolvent  = min(breachingColl, solventGain + penalty)
+    --   returnToBreaching = max(0, breachingColl - paidToSolvent)
+    choice Liquidate
+        : (ContractId Settlement, Optional (ContractId Settlement))
+        with
+          breachingSide : Side   -- which trader is underwater
+      controller venue
+      do
+        now <- getTime
+
+        (_, oracle) <- fetchByKey @MockOraclePrice (oracleOperator, underlying)
+        (_, rwaNAV) <- fetchByKey @RWAOracleFeed   (rwaOperator, collateralAssetId)
+
+        let markAge    = convertRelTimeToMicroseconds (subTime now oracle.timestamp)
+            maxMarkAge = convertRelTimeToMicroseconds (minutes 5)
+        assertMsg "mark price is stale (> 5 min)" (markAge <= maxMarkAge)
+
+        let mark = oracle.price
+            nav  = rwaNAV.navPerUnit
+
+        let (breachingColl, breachingTrader, solventTrader) =
+              case breachingSide of
+                Long  -> (longCollateralQty,  longTrader,  shortTrader)
+                Short -> (shortCollateralQty, shortTrader, longTrader)
+
+        let solventSide = oppositeSide breachingSide
+
+        -- Equity of the breaching side (DEX.md §6; funding baked into collateral)
+        let e  = equity breachingColl nav mark entryPrice size breachingSide
+            mm = maintenanceMargin size mark maintenanceMarginBps
+
+        -- ASSERT breach — a healthy position MUST fail here (verified by submitMustFail test)
+        assertMsg "position is healthy (E >= MM); cannot liquidate" (e < mm)
+
+        let solventGainUSD = max 0.0 (upnl mark entryPrice size solventSide)
+            solventGainTok = solventGainUSD / nav
+            penaltyTok     = size * mark * (intToDecimal liqPenaltyBps / 10000.0) / nav
+
+            totalOwedTok      = solventGainTok + penaltyTok
+            paidToSolvent     = min breachingColl totalOwedTok
+            returnToBreaching = max 0.0 (breachingColl - paidToSolvent)
+
+        -- PerpPositions are orphaned after the MatchedPair is archived;
+        -- the backend filters by matchedPairCid to exclude stale ones.
+
+        settleCid <- create Settlement with
+          venue; regulator
+          winner          = solventTrader
+          loser           = breachingTrader
+          collateralAmt   = paidToSolvent
+          collateralAsset = collateralAssetId
+          reason          = "Liquidation"
+
+        surplusCid <-
+          if returnToBreaching > 0.0
+            then do
+              s <- create Settlement with
+                venue; regulator
+                winner          = breachingTrader
+                loser           = breachingTrader
+                collateralAmt   = returnToBreaching
+                collateralAsset = collateralAssetId
+                reason          = "LiquidationSurplus"
+              return (Some s)
+            else return None
+
+        return (settleCid, surplusCid)
+
+    -- ── SettleClose ───────────────────────────────────────────────────────────
+    -- Venue closes the position at mark price (after trader's RequestClose).
+    -- Zero-sum RealizedPnL settles directly long ↔ short (DEX.md §8).
+    -- In production: both Settlement legs share one settlementRef for atomic DvP
+    -- via Allocation_ExecuteTransfer (CANTON-RWA.md §3).
+    choice SettleClose
+        : (ContractId Settlement, ContractId Settlement)
+      controller venue
+      do
+        now <- getTime
+
+        (_, oracle) <- fetchByKey @MockOraclePrice (oracleOperator, underlying)
+        (_, rwaNAV) <- fetchByKey @RWAOracleFeed   (rwaOperator, collateralAssetId)
+
+        let markAge    = convertRelTimeToMicroseconds (subTime now oracle.timestamp)
+            maxMarkAge = convertRelTimeToMicroseconds (minutes 5)
+        assertMsg "mark price is stale (> 5 min)" (markAge <= maxMarkAge)
+
+        let mark = oracle.price
+            nav  = rwaNAV.navPerUnit
+
+        -- Realised PnL from long's perspective (zero-sum: short's is the negative)
+        let pnlLong    = (mark - entryPrice) * size   -- USDCx
+            pnlLongTok = pnlLong / nav                -- tokens
+
+        -- Final collateral balances; floor at 0 (gap/bad-debt protection)
+        let longFinalColl  = max 0.0 (longCollateralQty  + pnlLongTok)
+            shortFinalColl = max 0.0 (shortCollateralQty - pnlLongTok)
+
+        -- PerpPositions are orphaned; backend filters by matchedPairCid active status.
+
+        longSettleCid <- create Settlement with
+          venue; regulator
+          winner          = longTrader
+          loser           = shortTrader
+          collateralAmt   = longFinalColl
+          collateralAsset = collateralAssetId
+          reason          = "Close"
+
+        shortSettleCid <- create Settlement with
+          venue; regulator
+          winner          = shortTrader
+          loser           = longTrader
+          collateralAmt   = shortFinalColl
+          collateralAsset = collateralAssetId
+          reason          = "Close"
+
+        return (longSettleCid, shortSettleCid)

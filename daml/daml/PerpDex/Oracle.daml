@@ -1,0 +1,118 @@
+-- Oracle contracts: price feed, RWA NAV, and Proof-of-Reserve attestation.
+-- Contract keys are used so callers always fetch the LATEST version via
+-- fetchByKey, avoiding the stale-CID problem that arises when UpdatePrice
+-- archives + recreates the contract (Daml contracts are immutable).
+-- PriceOracle interface is the stub for real Chainlink Verify; see CHAINLINK.md §7.
+module PerpDex.Oracle where
+
+import DA.Time (subTime, convertRelTimeToMicroseconds, hours, minutes)
+
+-- ─── PriceOracle interface ────────────────────────────────────────────────────
+
+data PriceOracleView = PriceOracleView
+  with
+    assetId   : Text
+    price     : Decimal   -- 8 dp, USDCx per unit of underlying
+    timestamp : Time
+  deriving (Eq, Show)
+
+-- Abstraction satisfied by MockOraclePrice (day 1) and the Chainlink Verifier
+-- wrapper (stretch).  DEX engine never touches the concrete type.
+interface PriceOracle where
+  viewtype PriceOracleView
+
+-- ─── MockOraclePrice ─────────────────────────────────────────────────────────
+-- Keyed by (operator, assetId) so any choice can fetchByKey to get the latest
+-- price without tracking the CID across UpdatePrice calls.
+
+template MockOraclePrice
+  with
+    operator  : Party     -- the oracle-loop party (Person 3)
+    observers : [Party]   -- venue + regulator (fetch authority in DEX choices)
+    assetId   : Text      -- e.g. "ETH/USD"
+    price     : Decimal   -- current mark/index price; 8 dp, USDCx
+    timestamp : Time      -- set to the report's observationsTimestamp
+  where
+    signatory operator
+    observer  observers
+
+    key (operator, assetId) : (Party, Text)
+    maintainer key._1
+
+    interface instance PriceOracle for MockOraclePrice where
+      view = PriceOracleView with assetId; price; timestamp
+
+    -- Backend posts a fresh signed price report here every tick
+    choice UpdatePrice : ContractId MockOraclePrice
+        with
+          newPrice     : Decimal
+          newTimestamp : Time
+      controller operator
+      do create this with price = newPrice; timestamp = newTimestamp
+
+-- ─── RWAOracleFeed ───────────────────────────────────────────────────────────
+-- Keyed by (operator, asset).  navPerUnit rises at ~4 % APY so CollateralValue
+-- grows automatically each margin check (CANTON-RWA.md §5).
+
+template RWAOracleFeed
+  with
+    operator   : Party
+    observers  : [Party]
+    asset      : Text       -- e.g. "T-BILL-USD"
+    navPerUnit : Decimal    -- USDCx per collateral token; rises over time
+    timestamp  : Time       -- staleness guard: must be < 25 h (DEX.md §10.1)
+  where
+    signatory operator
+    observer  observers
+
+    key (operator, asset) : (Party, Text)
+    maintainer key._1
+
+    -- Daily heartbeat from NAV provider
+    choice UpdateNAV : ContractId RWAOracleFeed
+        with
+          newNav : Decimal
+          newTs  : Time
+      controller operator
+      do create this with navPerUnit = newNav; timestamp = newTs
+
+-- ─── PoRAttestation ──────────────────────────────────────────────────────────
+-- Keyed by (operator, assetId).  MVP: operator posts reserve + supply numbers.
+-- Stretch: V9 SmartData fullReport through Chainlink Verify (CHAINLINK.md §8).
+
+template PoRAttestation
+  with
+    operator       : Party
+    observers      : [Party]   -- venue, regulator
+    assetId        : Text
+    reserveAmt     : Decimal   -- total reserves backing the RWA token
+    issuedSupply   : Decimal   -- circulating supply
+    lastAttestedAt : Time      -- attestation age must be < 25 h
+  where
+    signatory operator
+    observer  observers
+
+    key (operator, assetId) : (Party, Text)
+    maintainer key._1
+
+    -- Operator-facing solvency query (not called from PlaceOrder because
+    -- the operator key is not in scope there; PlaceOrder fetches inline instead)
+    nonconsuming choice CheckSolvency : Bool
+      controller operator
+      do
+        now <- getTime
+        let ageMicros  = convertRelTimeToMicroseconds (subTime now lastAttestedAt)
+            maxMicros  = convertRelTimeToMicroseconds (hours 25)
+        return (reserveAmt >= issuedSupply && ageMicros <= maxMicros)
+
+    choice UpdateAttestation : ContractId PoRAttestation
+        with
+          newReserve : Decimal
+          newSupply  : Decimal
+          newTs      : Time
+      controller operator
+      do
+        create this with
+          reserveAmt     = newReserve
+          issuedSupply   = newSupply
+          lastAttestedAt = newTs
