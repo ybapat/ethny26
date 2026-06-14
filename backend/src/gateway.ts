@@ -564,8 +564,12 @@ async function handleAction(path: string, body: any): Promise<{ ok: boolean; err
       if (!found) return { ok: false, error: "pair not found" };
       const pr = pairView(found);
       const side = body.side ?? "Long";
-      // push a mark that makes `side` breach (simulate the move), then liquidate
-      const crash = r2(side === "Long" ? pr.entryPrice * 0.85 : pr.entryPrice * 1.15);
+      // push a mark that makes `side` breach (simulate the move), then liquidate.
+      // Use an aggressive move (-40% long / +40% short) so equity < MM holds even
+      // for low-leverage, over-collateralized positions — this is a demo "force
+      // liquidation" button, so it must reliably trip the on-ledger `equity < MM`
+      // assert rather than silently no-op.
+      const crash = r2(side === "Long" ? pr.entryPrice * 0.6 : pr.entryPrice * 1.4);
       await pushMark(crash);
       const eq = risk.equity((side === "Long" ? pr.long.collateralQty : pr.short.collateralQty) * world.nav, risk.unrealizedPnl(side, pr.size, pr.entryPrice, crash), 0);
       const mm = risk.maintenanceMargin(pr.size, crash, MMR);
