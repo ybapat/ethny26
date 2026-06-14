@@ -46,7 +46,10 @@ template Market
     signatory venue
     observer  regulator
 
-    choice PlaceOrder : ContractId Order
+    -- nonconsuming: the Market is long-lived and must survive every order
+    -- (a consuming PlaceOrder would archive the Market after the first order,
+    --  leaving Orders pointing at a dead marketCid and breaking MatchOrders).
+    nonconsuming choice PlaceOrder : ContractId Order
         with
           trader                  : Party
           side                    : Side
