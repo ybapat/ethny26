@@ -1,0 +1,283 @@
+/* components.css — friendly panel styles. */
+
+/* ------------------------------ chart header ----------------------------- */
+.chart-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  flex-wrap: wrap;
+}
+.cs-main { display: flex; flex-direction: column; }
+.cs-stats {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.cs-stat { display: flex; flex-direction: column; gap: 3px; }
+.cs-hint { color: var(--text-faint); font-weight: 500; }
+.public-note {
+  padding: 11px 20px;
+  background: var(--green-softer);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--green-bright);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* badges / counts */
+.cnt {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 6px;
+  margin-left: 5px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 6px;
+  margin-left: 5px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-mid);
+  font-size: 11px;
+  text-align: center;
+}
+.health-bar {
+  display: inline-block;
+  width: 46px;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.health-fill { display: block; height: 100%; border-radius: 4px; transition: width 0.3s, background 0.3s; }
+
+/* ------------------------------ order ticket ----------------------------- */
+.ticket { overflow: hidden; }
+.ticket-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.tt-tab {
+  height: 46px;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--text-dim);
+  border-bottom: 2px solid var(--line);
+  transition: all 0.15s;
+}
+.tt-tab:hover { color: var(--text-mid); }
+.tt-tab.long.on { color: var(--up); border-bottom-color: var(--up); background: var(--up-soft); }
+.tt-tab.short.on { color: var(--down); border-bottom-color: var(--down); background: var(--down-soft); }
+
+.ticket-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 15px;
+  overflow-y: auto;
+}
+/* scrollable inputs + a pinned action footer so the Buy/Sell button is always
+   visible no matter the viewport height */
+.ticket-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 15px;
+}
+.ticket-footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 15px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+.presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 7px; margin-top: 9px; }
+.preset {
+  height: 30px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text-mid);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: all 0.14s;
+}
+.preset:hover { border-color: var(--green-dim); color: var(--text); }
+.preset.on { background: var(--green-soft); border-color: var(--green-dim); color: var(--green); }
+
+.lev-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--green-dim), var(--green));
+  outline: none;
+  margin-top: 4px;
+}
+.lev-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--green);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+.lev-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--green);
+  cursor: pointer;
+}
+
+.summary-box {
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sum-row { gap: 12px; }
+.balance-row { padding: 2px 2px 0; }
+
+.hint {
+  font-size: 13px;
+  color: var(--text-mid);
+  background: var(--amber-soft);
+  border: 1px solid rgba(243, 177, 59, 0.22);
+  border-radius: var(--r-md);
+  padding: 13px 15px;
+  line-height: 1.55;
+}
+.toast {
+  font-size: 13px;
+  border-radius: var(--r-md);
+  padding: 11px 14px;
+  line-height: 1.45;
+  animation: rise 0.3s ease both;
+}
+.toast.ok { background: var(--up-soft); color: var(--green-bright); }
+.toast.bad { background: var(--down-soft); color: var(--down); }
+
+/* ------------------------------ order book ------------------------------- */
+.book-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.book-col { border-right: 1px solid var(--line-soft); }
+.book-col:last-child { border-right: none; }
+.book-col-head {
+  padding: 11px 16px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--line-soft);
+}
+.book-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 16px;
+  font-size: 13px;
+}
+.book-row .tnum { position: relative; z-index: 1; }
+.book-depth { position: absolute; right: 0; top: 0; bottom: 0; z-index: 0; }
+.book-row.own { background: rgba(90, 176, 255, 0.07); }
+
+/* -------------------------------- wallet --------------------------------- */
+.net-value { display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; }
+.holding {
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  padding: 16px;
+}
+.holding-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.token-badge {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--on-accent);
+}
+.por { background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 16px; }
+.por-bar { height: 8px; border-radius: 4px; background: var(--surface-3); margin: 12px 0 9px; overflow: hidden; }
+.por-fill { display: block; height: 100%; background: linear-gradient(90deg, var(--green-dim), var(--green)); border-radius: 4px; }
+
+/* -------------------------------- venue ---------------------------------- */
+.loop-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.loop-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 15px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+}
+.ctl-row {
+  padding: 13px 15px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+}
+code {
+  font-family: var(--font-mono);
+  background: var(--surface-3);
+  padding: 2px 6px;
+  border-radius: 5px;
+  color: var(--green);
+  font-size: 0.9em;
+}
+
+/* ----------------------------- summary cards ----------------------------- */
+.summary-card {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+}
+.audit-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  background: var(--amber-soft);
+  border: 1px solid rgba(243, 177, 59, 0.22);
+  border-radius: var(--r-lg);
+}

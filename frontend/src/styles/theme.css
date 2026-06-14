@@ -1,0 +1,70 @@
+/* theme.css — simple, classy dark UI.
+   • Background: neutral charcoal (no colour tint).
+   • Accent: a restrained blue, used only for buttons / links / focus / selection.
+   • Price direction & PnL: green (up) / red (down) — on the chart and the numbers.
+   • Amber: regulator / audit.
+   (The accent variables keep their --green* names so existing references pick up
+    the blue accent in one place; semantically they are "the accent".) */
+
+:root {
+  /* surfaces — neutral charcoal, no hue */
+  --bg-base: #0b0c0e;
+  --bg-app: #0d0f11;
+  --surface: #141619;
+  --surface-2: #181a1e;
+  --surface-3: #1e2126;
+  --hover: #212429;
+
+  /* borders — quiet */
+  --line: #23262b;
+  --line-soft: #1b1e22;
+  --line-strong: #2d3138;
+
+  /* accent → blue (text / buttons / focus only) */
+  --green: #4f8bf5;
+  --green-bright: #6fa3ff;
+  --green-dim: #3a68cf;
+  --green-deep: #24407e;
+  --green-soft: rgba(79, 139, 245, 0.12);
+  --green-softer: rgba(79, 139, 245, 0.06);
+  --green-glow: rgba(79, 139, 245, 0.25);
+
+  /* trading semantics — green up, red down */
+  --up: #2cc878;
+  --up-soft: rgba(44, 200, 120, 0.12);
+  --down: #ef5165;
+  --down-soft: rgba(239, 81, 101, 0.12);
+  /* aliases used around the app */
+  --long: #2cc878;
+  --short: #ef5165;
+  --short-glow: rgba(239, 81, 101, 0.4);
+
+  /* roles */
+  --amber: #e3a948;
+  --amber-soft: rgba(227, 169, 72, 0.12);
+  --blue: #5ab0ff;
+
+  /* dark text used on bright accent fills */
+  --on-accent: #06101f;
+
+  /* text — neutral */
+  --text: #e8eaed;
+  --text-mid: #a2a7b0;
+  --text-dim: #6b7079;
+  --text-faint: #43474f;
+
+  /* type */
+  --font-ui: "Manrope", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* radii + shadow — soft, flat */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 3px 14px -10px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 38px -24px rgba(0, 0, 0, 0.62);
+
+  --header-h: 54px;
+}
