@@ -6,18 +6,6 @@ module PerpDex.Oracle where
 
 import DA.Time (subTime, convertRelTimeToMicroseconds, hours)
 
--- ─── PriceOracle interface ────────────────────────────────────────────────────
-
-data PriceOracleView = PriceOracleView
-  with
-    assetId   : Text
-    price     : Decimal
-    timestamp : Time
-  deriving (Eq, Show)
-
-interface PriceOracle where
-  viewtype PriceOracleView
-
 -- ─── MockOraclePrice ─────────────────────────────────────────────────────────
 -- Person 3 calls UpdatePrice each tick. Returns the NEW CID — callers
 -- must pass this fresh CID when exercising MatchedPair choices.
@@ -32,9 +20,6 @@ template MockOraclePrice
   where
     signatory operator
     observer  observers
-
-    interface instance PriceOracle for MockOraclePrice where
-      view = PriceOracleView with assetId; price; timestamp
 
     choice UpdatePrice : ContractId MockOraclePrice
         with
