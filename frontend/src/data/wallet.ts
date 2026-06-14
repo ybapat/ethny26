@@ -12,11 +12,19 @@ import { encodeBase64, decodeBase64 } from "tweetnacl-util";
 
 const LS_KEY = "darkpool.wallets.v1"; // { [partyId]: privateKeyBase64 }
 
+// In-memory fallback for when localStorage is unavailable (private mode, storage
+// blocked by browser settings, or quota). Without this, a setItem that throws used
+// to abort onboarding entirely (rememberWallet sits before onboard-execute).
+let mem: Record<string, string> | null = null;
+
 function load(): Record<string, string> {
-  try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch { return {}; }
+  if (mem) return mem;
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch { mem = {}; return mem; }
 }
 function save(m: Record<string, string>): void {
-  localStorage.setItem(LS_KEY, JSON.stringify(m));
+  if (mem) { mem = m; return; }
+  try { localStorage.setItem(LS_KEY, JSON.stringify(m)); }
+  catch { mem = m; } // localStorage write failed — keep keys in memory for this session
 }
 
 /** Generate a fresh Ed25519 keypair (base64), private key never leaves the browser. */
@@ -41,4 +49,9 @@ export function walletKey(partyId: string): string | undefined {
 /** Party ids of all self-custody wallets this browser holds keys for. */
 export function knownWallets(): string[] {
   return Object.keys(load());
+}
+
+/** Forget a wallet's key (e.g. it was orphaned by a gateway restart). */
+export function forgetWallet(partyId: string): void {
+  const m = load(); delete m[partyId]; save(m);
 }

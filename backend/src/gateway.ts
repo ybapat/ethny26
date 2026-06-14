@@ -522,6 +522,10 @@ async function handleAction(path: string, body: any): Promise<{ ok: boolean; err
     case "/api/order": {
       const { trader, side, size, limitPrice, leverage } = body;
       if (!trader || !side || !(size > 0)) return { ok: false, error: "bad order" };
+      // Custodial path can only sign for gateway-held parties. A self-custody party
+      // whose browser key is missing (orphaned by a gateway restart) lands here and
+      // would submit an unsigned tx that dies as "0 valid signatures". Fail clearly.
+      if (!keyMap.has(trader)) return { ok: false, error: "stale-wallet: gateway holds no signing key for this party — its self-custody key was lost (likely a gateway restart). Disconnect and create a fresh wallet." };
       const px = limitPrice > 0 ? limitPrice : curPrice.get(UI_MARKET)!;
       const need = r6(minCollQty(size, px, leverage || 5) * 1.05);
       if ((await freeOf(trader)) < need - 1e-6) return { ok: false, error: "insufficient free RWA collateral — use the faucet" };

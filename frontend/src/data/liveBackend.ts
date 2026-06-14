@@ -11,7 +11,7 @@
  * gateway already validates and only mutates the ledger on success.
  */
 import { INSTRUMENTS, MARKETS, SEED_PRICE } from "../domain/config.ts";
-import { generateKeypair, signHash, rememberWallet, walletKey } from "./wallet.ts";
+import { generateKeypair, signHash, rememberWallet, walletKey, forgetWallet } from "./wallet.ts";
 import type { EngineSnapshot, PlaceOrderInput } from "./mockEngine.ts";
 import type { OraclePrice, Party, Side } from "../domain/types.ts";
 
@@ -119,12 +119,25 @@ export class LiveBackend {
     this.lastError = null;
     const priv = walletKey(input.trader);
     if (priv) { void this.selfCustodyOrder(input, priv); return { ok: true }; } // browser-signed
-    // custodial trader (gateway holds the key)
-    void this.send("/api/order", input).then((r) => { if (!r.ok) this.fail("Order rejected: " + (r.error ?? "")); });
+    // custodial trader (gateway holds the key) — or an orphaned self-custody wallet
+    // whose browser key we lost; orderFailed() detects the latter and recovers.
+    void this.send("/api/order", input).then((r) => { if (!r.ok) this.orderFailed(input.trader, r.error); });
     return { ok: true }; // optimistic; the order appears on the next poll if accepted
   }
 
   private fail(msg: string): void { this.lastError = msg; (this.snap as any).error = msg; this.emit(); }
+
+  /** Surface an order failure; if it looks like a stale/orphaned wallet (key no
+   * longer matches the on-ledger party, e.g. after a gateway restart), forget the
+   * dead key and tell the user to reconnect instead of showing a cryptic error. */
+  private orderFailed(trader: string, error?: string): void {
+    if (/signature|invalid|stale-wallet|0 valid/i.test(error ?? "")) {
+      forgetWallet(trader);
+      this.fail("This wallet is stale (likely a gateway restart) — its key no longer matches. Disconnect and create a new wallet.");
+    } else {
+      this.fail("Order rejected: " + (error ?? ""));
+    }
+  }
 
   /** Self-custody order: gateway prepares, the BROWSER signs the hash, gateway executes. */
   private async selfCustodyOrder(input: PlaceOrderInput, privateKey: string): Promise<void> {
@@ -132,7 +145,7 @@ export class LiveBackend {
     if (!op.ok || !op.hash || !op.prepareId) { this.fail("Order rejected: " + (op.error ?? "could not prepare")); return; }
     const signature = signHash(op.hash, privateKey);
     const ex = await this.send("/api/wallet/order-execute", { prepareId: op.prepareId, signature });
-    if (!ex.ok) this.fail("Order failed on execute: " + (ex.error ?? ""));
+    if (!ex.ok) this.orderFailed(input.trader, ex.error);
   }
 
   cancelOrder(contractId: string): void {
@@ -158,11 +171,21 @@ export class LiveBackend {
     const { publicKey, privateKey } = generateKeypair();
     const prep = await this.send("/api/wallet/onboard-prepare", { publicKey, name });
     if (!prep.ok || !prep.party || !prep.multiHash) return null;
+    // Persist the key BEFORE executing onboarding. Each step takes ~9s on the
+    // devnet, so the execute response can be lost/slow even after the party
+    // commits on-ledger — if we only stored on success, the wallet would land in
+    // the roster with no browser key (connectable but every trade fails). Storing
+    // first means a dropped response can't orphan the key; we roll back only on a
+    // genuine failure.
+    rememberWallet(prep.party, privateKey);
     const signature = signHash(prep.multiHash, privateKey);          // BROWSER signs the topology
     const exec = await this.send("/api/wallet/onboard-execute", { party: prep.party, signature, name });
-    if (!exec.ok) return null;
-    rememberWallet(prep.party, privateKey);                          // persist locally for trade signing
-    return prep.party;
+    // KEEP the key even on a failed response: onboard-execute may have committed
+    // on-ledger (the gateway already pushed the party to the roster) with only the
+    // HTTP reply lost — forgetting here would orphan a live wallet. A dangling key
+    // for a party that truly was never created is harmless (it never appears in the
+    // roster, so it's unselectable).
+    return exec.ok ? prep.party : null;
   }
 
   applyFunding(market: string): void {

@@ -29,7 +29,14 @@
       "WebSearch",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:blog.1inch.com)",
-      "WebFetch(domain:ethglobal.com)"
+      "WebFetch(domain:ethglobal.com)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('ready:',d.get\\('ready'\\),'running:',d.get\\('running'\\)\\); print\\('parties:'\\); [print\\('  ',p.get\\('role'\\),p.get\\('label'\\),p.get\\('partyId'\\)[:40] if p.get\\('partyId'\\) else '\\(none\\)'\\) for p in d.get\\('parties',[]\\)]; print\\('orders:',len\\(d.get\\('orders',[]\\)\\)\\); print\\('holdings keys:',[k[:30] for k in d.get\\('holdings',{}\\).keys\\(\\)]\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(awk '{print $2, $9, $10, $11, $12, $13}')",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(python3 *)",
+      "Bash(xargs kill -9)"
     ]
   }
 }

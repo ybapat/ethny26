@@ -20,7 +20,8 @@
     "selfcustody:trade": "node --env-file-if-exists=.env src/tradeSpike.ts",
     "start": "node --env-file-if-exists=.env src/keeper.ts",
     "live:chainlink": "node --env-file-if-exists=.env src/liveChainlink.ts",
-    "upload-dar": "node --env-file-if-exists=.env src/uploadDar.ts"
+    "upload-dar": "node --env-file-if-exists=.env src/uploadDar.ts",
+    "prune-rights": "node --env-file-if-exists=.env src/pruneRights.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

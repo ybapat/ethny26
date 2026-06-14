@@ -17,6 +17,7 @@ export function ConnectScreen() {
   const { snap, connect, createSelfCustodyWallet, isMock } = useStore();
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const traders = snap.parties.filter((p) => p.role === "trader");
   const roles = (["venue", "regulator", "outsider"] as PartyRole[])
@@ -26,11 +27,18 @@ export function ConnectScreen() {
   const create = async () => {
     const n = name.trim();
     if (!n || creating) return;
+    setErr(null);
     setCreating(true);
-    const id = await createSelfCustodyWallet(n); // browser generates + holds the key
-    setCreating(false);
-    setName("");
-    if (id) connect(id);
+    try {
+      const id = await createSelfCustodyWallet(n); // browser generates + holds the key
+      if (id) { setName(""); connect(id); }
+      else setErr("Onboarding failed — please try again.");
+    } catch (e) {
+      // Never let a throw leave the button stuck on "Onboarding…" with no feedback.
+      setErr("Onboarding error: " + ((e as Error)?.message ?? String(e)));
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
@@ -61,8 +69,9 @@ export function ConnectScreen() {
             <div className="wallet-sees">Generates an Ed25519 key <strong>in your browser</strong> and onboards a real Canton party — you hold the key, you sign your own trades.</div>
             <input className="input" placeholder="Name (e.g. Charlie)" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
             <button className="btn btn-long" style={{ height: 38 }} disabled={!name.trim() || creating} onClick={create}>
-              {creating ? "Onboarding…" : "Create & connect →"}
+              {creating ? "Onboarding… (~15s)" : "Create & connect →"}
             </button>
+            {err && <div className="wallet-sees" style={{ color: "var(--down)", marginTop: 6 }}>{err}</div>}
           </div>
         </div>
 
