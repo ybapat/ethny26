@@ -62,11 +62,9 @@ setupWorld = do
 
 -- Helper: query current oracle CIDs (they may have changed via UpdatePrice)
 getOracleCids : Party -> Party -> Script (ContractId MockOraclePrice, ContractId RWAOracleFeed)
-getOracleCids oracle venue = do
-  oracles <- query @MockOraclePrice oracle
-  navs    <- query @RWAOracleFeed oracle
-  let oracleCid = fst (head oracles)
-      navCid    = fst (head navs)
+getOracleCids oracle _venue = do
+  (oracleCid, _) :: _ <- query @MockOraclePrice oracle
+  (navCid, _)    :: _ <- query @RWAOracleFeed oracle
   return (oracleCid, navCid)
 
 -- Helper: open a matched pair
