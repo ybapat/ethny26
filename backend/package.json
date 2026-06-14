@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Person 3 track: Chainlink oracle feed + risk/trigger loop for the private perps DEX on Canton",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "test": "node --test",

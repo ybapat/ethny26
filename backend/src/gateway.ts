@@ -36,7 +36,7 @@ import { risk } from "./risk/math.ts";
 /* ----------------------------- config / mapping ----------------------------- */
 
 const base = (process.env.LEDGER_BASE_URL ?? "").replace(/\/+$/, "");
-const PORT = Number(process.env.GATEWAY_PORT ?? 8080);
+const PORT = Number(process.env.PORT ?? process.env.GATEWAY_PORT ?? 8080); // hosts (Render/Railway) inject PORT
 const PKG = "#perp-dex-v2";
 const CORE = `${PKG}:PerpDex.Core`, ORC = `${PKG}:PerpDex.Oracle`, RWA = `${PKG}:PerpDex.RWA`;
 const POLL_MS = Number(process.env.POLL_MS ?? 3000);
