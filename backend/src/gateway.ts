@@ -394,14 +394,14 @@ async function matchBook(): Promise<number> {
   const shorts = orders.filter((o: any) => o.arg.side === "Short").sort((a: any, b: any) => Number(a.arg.limitPrice) - Number(b.arg.limitPrice) || a.arg.createdAt.localeCompare(b.arg.createdAt));
   let matched = 0;
   for (const lo of longs) {
-    const so = shorts.find((s: any) => Number(lo.arg.limitPrice) >= Number(s.arg.limitPrice) && Number(s.arg.size) === Number(lo.arg.size));
+    const so = shorts.find((s: any) => Number(lo.arg.limitPrice) >= Number(s.arg.limitPrice));
     if (!so) continue;
     shorts.splice(shorts.indexOf(so), 1);
     const mark = curPrice.get(UI_MARKET)!;
     const px = r2(Math.min(Number(lo.arg.limitPrice), Math.max(Number(so.arg.limitPrice), mark)));
-    const size = Number(lo.arg.size);
-    const r = await exerExt(`${CORE}:Order`, lo.cid, "MatchOrders", { shortOrderCid: so.cid, executionPrice: dg(px), fillSize: dg(size) }, [world.venue]);
-    if (r.ok) { matched++; fills.unshift({ id: idg("fill"), market: UI_MARKET, price: px, size, takerSide: "Long", at: nowS() }); fills.length = Math.min(fills.length, MAX_TAPE); }
+    const fillSize = Math.min(Number(lo.arg.size), Number(so.arg.size));
+    const r = await exerExt(`${CORE}:Order`, lo.cid, "MatchOrders", { shortOrderCid: so.cid, executionPrice: dg(px), fillSize: dg(fillSize) }, [world.venue]);
+    if (r.ok) { matched++; fills.unshift({ id: idg("fill"), market: UI_MARKET, price: px, size: fillSize, takerSide: "Long", at: nowS() }); fills.length = Math.min(fills.length, MAX_TAPE); }
   }
   return matched;
 }
