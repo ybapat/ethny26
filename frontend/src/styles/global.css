@@ -12,6 +12,10 @@ body,
 #root {
   height: 100%;
 }
+#root {
+  position: relative;
+  z-index: 1;
+}
 
 body {
   background: var(--bg-base);
@@ -24,14 +28,28 @@ body {
   overflow: hidden;
 }
 
-/* neutral, flat background — a whisper of light at the top, no colour */
+/* ambient field — layered cool light at the top, a faint live-data tint to the
+   side, and a deepening vignette toward the corners. Confidential, atmospheric. */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background: radial-gradient(1200px 560px at 50% -20%, rgba(255, 255, 255, 0.018), transparent 60%);
+  background:
+    radial-gradient(1100px 520px at 50% -12%, rgba(79, 139, 245, 0.055), transparent 62%),
+    radial-gradient(880px 620px at 94% 2%, rgba(37, 204, 125, 0.022), transparent 60%),
+    radial-gradient(1200px 900px at 4% 104%, rgba(0, 0, 0, 0.55), transparent 56%);
+}
+/* faint film grain for texture (very subtle) */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 ::selection {
@@ -79,15 +97,17 @@ a {
 .tnum {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 .label {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
   color: var(--text-dim);
 }
-.h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
-.h2 { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.h1 { font-family: var(--font-display); font-size: var(--fs-h1); font-weight: 700; letter-spacing: -0.02em; }
+.h2 { font-family: var(--font-display); font-size: var(--fs-h2); font-weight: 700; letter-spacing: -0.015em; }
 .up { color: var(--up); }
 .down { color: var(--down); }
 .pos { color: var(--up); }
@@ -110,9 +130,10 @@ a {
   border-bottom: 1px solid var(--line-soft);
 }
 .card-title {
-  font-size: 14px;
+  font-family: var(--font-display);
+  font-size: 14.5px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.012em;
   color: var(--text);
   display: flex;
   align-items: center;
@@ -124,7 +145,7 @@ a {
 /* keep old class names working as aliases */
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-md); position: relative; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--line-soft); }
-.panel-title { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); display: flex; align-items: center; gap: 9px; }
+.panel-title { font-family: var(--font-display); font-size: 14.5px; font-weight: 700; letter-spacing: -0.012em; color: var(--text); display: flex; align-items: center; gap: 9px; }
 .panel-body { padding: 16px 18px; }
 .ticked::before, .ticked::after { content: none; }
 
@@ -142,35 +163,29 @@ a {
   color: var(--text);
   font-size: 13.5px;
   font-weight: 600;
-  transition: all 0.15s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
   white-space: nowrap;
 }
-.btn:hover { background: var(--hover); border-color: var(--line-strong); }
-.btn:active { transform: translateY(1px); }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn-primary {
-  background: var(--green);
-  border-color: var(--green);
-  color: var(--on-accent);
-  font-weight: 700;
-}
+.btn:hover { background: var(--hover); border-color: var(--line); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary { background: var(--green); border-color: var(--green); color: var(--on-accent); font-weight: 700; }
 .btn-primary:hover { background: var(--green-bright); border-color: var(--green-bright); }
-.btn-long {
-  background: var(--up);
-  border-color: var(--up);
-  color: var(--on-accent);
-  font-weight: 700;
-}
-.btn-long:hover { filter: brightness(1.08); }
-.btn-short {
-  background: var(--down);
-  border-color: var(--down);
-  color: #2a040d;
-  font-weight: 700;
-}
-.btn-short:hover { filter: brightness(1.08); }
+.btn-long { background: var(--up); border-color: var(--up); color: var(--on-accent); font-weight: 700; }
+.btn-long:hover { background: var(--up-bright); border-color: var(--up-bright); }
+.btn-short { background: var(--down); border-color: var(--down); color: #2a040d; font-weight: 700; }
+.btn-short:hover { background: var(--down-bright); border-color: var(--down-bright); }
 .btn-ghost { background: transparent; border-color: var(--line-strong); }
-.btn-ghost:hover { background: var(--surface-2); }
+.btn-ghost:hover { background: var(--surface-2); border-color: var(--line-strong); }
+.btn-disconnect {
+  color: color-mix(in srgb, var(--down) 75%, var(--text-mid));
+  border-color: color-mix(in srgb, var(--down) 26%, var(--line));
+  background: color-mix(in srgb, var(--down) 6%, transparent);
+}
+.btn-disconnect:hover {
+  color: var(--down);
+  border-color: color-mix(in srgb, var(--down) 40%, var(--line));
+  background: color-mix(in srgb, var(--down) 12%, transparent);
+}
 .btn-sm { height: 32px; padding: 0 13px; font-size: 12.5px; }
 
 /* ------------------------------ inputs ------------------------------ */
@@ -236,11 +251,12 @@ a {
 .tbl th {
   text-align: right;
   font-weight: 600;
-  font-size: 11px;
-  letter-spacing: 0.01em;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
   color: var(--text-dim);
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
   background: var(--surface);

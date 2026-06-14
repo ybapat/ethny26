@@ -1,7 +1,8 @@
-/** PriceChart.tsx — a clean, zoomed-in area/line price chart with time labels on
- * the x-axis and price labels on the y-axis. Green when up, red when down. */
-import { useEffect, useRef } from "react";
+/** PriceChart.tsx — a clean area/line price chart with a price axis, an adaptive
+ * time axis, and a hover crosshair + tooltip. Green when up, red when down. */
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Candle } from "../domain/types.ts";
+import { fmtUsd } from "../lib/format.ts";
 
 export interface OverlayLine {
   price: number;
@@ -17,18 +18,40 @@ interface Props {
   overlays?: OverlayLine[];
 }
 
-const MONO = "'IBM Plex Mono', monospace";
-const UI = "'Manrope', sans-serif";
+const MONO = "'Geist Mono', monospace";
+const UI = "'Hanken Grotesk', sans-serif";
 
-function fmtTime(unixSec: number): string {
+const pad2 = (n: number) => n.toString().padStart(2, "0");
+function fmtAxis(unixSec: number, spanSec: number): string {
   const d = new Date(unixSec * 1000);
-  const p = (n: number) => n.toString().padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  if (spanSec > 3 * 86400) return `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}`;
+  if (spanSec > 2 * 3600) return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+function fmtFull(unixSec: number, spanSec: number): string {
+  const d = new Date(unixSec * 1000);
+  const t = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  if (spanSec > 3 * 86400) return `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} · ${t}`;
+  if (spanSec > 2 * 3600) return t;
+  return `${t}:${pad2(d.getSeconds())}`;
+}
+
+interface Scale {
+  view: Candle[];
+  plotW: number;
+  plotH: number;
+  padT: number;
+  lo: number;
+  hi: number;
+  W: number;
+  spanSec: number;
 }
 
 export function PriceChart({ candles, points = 26, overlays = [] }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const scaleRef = useRef<Scale | null>(null);
+  const [hover, setHover] = useState<{ x: number; y: number; price: number; time: number } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -50,7 +73,7 @@ export function PriceChart({ candles, points = 26, overlays = [] }: Props) {
       if (candles.length === 0) return;
 
       const padR = 62;
-      const padB = 26; // room for time labels
+      const padB = 26;
       const padT = 14;
       const plotW = W - padR;
       const plotH = H - padB - padT;
@@ -60,9 +83,12 @@ export function PriceChart({ candles, points = 26, overlays = [] }: Props) {
       let lo = Math.min(...pts);
       let hi = Math.max(...pts);
       for (const o of overlays) if (o.price > 0) { lo = Math.min(lo, o.price); hi = Math.max(hi, o.price); }
-      const pad = (hi - lo || 1) * 0.1;
-      lo -= pad;
-      hi += pad;
+      const padP = (hi - lo || 1) * 0.1;
+      lo -= padP;
+      hi += padP;
+      const spanSec = (view[view.length - 1]?.time ?? 0) - (view[0]?.time ?? 0);
+      scaleRef.current = { view, plotW, plotH, padT, lo, hi, W, spanSec };
+
       const xOf = (i: number) => (i / (pts.length - 1 || 1)) * plotW;
       const yOf = (p: number) => padT + plotH - ((p - lo) / (hi - lo)) * plotH;
 
@@ -100,17 +126,17 @@ export function PriceChart({ candles, points = 26, overlays = [] }: Props) {
         const t = view[i]?.time;
         if (t) {
           const tx = Math.max(20, Math.min(plotW - 20, x));
-          ctx.fillText(fmtTime(t), tx, H - 9);
+          ctx.fillText(fmtAxis(t, spanSec), tx, H - 9);
         }
       }
 
       const up = pts[pts.length - 1] >= pts[0];
-      const line = up ? "#2cc878" : "#ef5165";
+      const line = up ? "#25cc7d" : "#f04d63";
 
       // area fill
       const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
-      grad.addColorStop(0, up ? "rgba(44,200,120,0.16)" : "rgba(239,81,101,0.16)");
-      grad.addColorStop(1, up ? "rgba(44,200,120,0)" : "rgba(239,81,101,0)");
+      grad.addColorStop(0, up ? "rgba(37,204,125,0.16)" : "rgba(240,77,99,0.16)");
+      grad.addColorStop(1, up ? "rgba(37,204,125,0)" : "rgba(240,77,99,0)");
       ctx.beginPath();
       ctx.moveTo(xOf(0), yOf(pts[0]));
       pts.forEach((p, i) => ctx.lineTo(xOf(i), yOf(p)));
@@ -182,9 +208,43 @@ export function PriceChart({ candles, points = 26, overlays = [] }: Props) {
     return () => ro.disconnect();
   }, [candles, overlays, points]);
 
+  const onMove = (e: ReactMouseEvent) => {
+    const s = scaleRef.current;
+    const wrap = wrapRef.current;
+    if (!s || !wrap || s.view.length === 0) return;
+    const rect = wrap.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    if (x > s.plotW) { setHover(null); return; } // over the price axis
+    const n = s.view.length;
+    let idx = Math.round((x / s.plotW) * (n - 1));
+    idx = Math.max(0, Math.min(n - 1, idx));
+    const c = s.view[idx];
+    const px = (idx / (n - 1 || 1)) * s.plotW;
+    const py = s.padT + s.plotH - ((c.close - s.lo) / (s.hi - s.lo)) * s.plotH;
+    setHover({ x: px, y: py, price: c.close, time: c.time });
+  };
+
+  const s = scaleRef.current;
+  const tipRight = hover && s ? hover.x > s.plotW * 0.62 : false;
+
   return (
-    <div ref={wrapRef} style={{ position: "relative", flex: 1, minHeight: 0 }}>
+    <div
+      ref={wrapRef}
+      style={{ position: "relative", flex: 1, minHeight: 0 }}
+      onMouseMove={onMove}
+      onMouseLeave={() => setHover(null)}
+    >
       <canvas ref={canvasRef} />
+      {hover && s && (
+        <>
+          <div className="cx-line" style={{ left: hover.x, top: s.padT, height: s.plotH }} />
+          <div className="cx-dot" style={{ left: hover.x, top: hover.y }} />
+          <div className="chart-tip" style={{ left: hover.x, top: s.padT + 4, transform: `translateX(${tipRight ? "calc(-100% - 10px)" : "10px"})` }}>
+            <span className="chart-tip-px">{fmtUsd(hover.price)}</span>
+            <span className="chart-tip-t">{fmtFull(hover.time, s.spanSec)}</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }

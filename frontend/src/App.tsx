@@ -12,6 +12,7 @@ import { ChartPanel } from "./components/ChartPanel.tsx";
 import { OrderForm } from "./components/OrderForm.tsx";
 import { CollateralCard } from "./components/CollateralCard.tsx";
 import { MarketTabs } from "./components/MarketTabs.tsx";
+import { TraderActivity } from "./components/TraderActivity.tsx";
 import { OrdersTable, PositionsTable } from "./components/PositionsPanel.tsx";
 import { VenuePanel } from "./components/VenuePanel.tsx";
 
@@ -52,7 +53,7 @@ function TraderView() {
         <CollateralCard />
         <OrderForm />
       </div>
-      <div className="area-bottom"><MarketTabs /></div>
+      <div className="area-bottom"><TraderActivity /></div>
     </div>
   );
 }

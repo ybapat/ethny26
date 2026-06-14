@@ -1,20 +1,17 @@
 /** TopBar.tsx — slim header: brand, the live market, and the connected identity
- * with a Disconnect (switch wallet) button. Tabs/market-switch removed for the
- * clean demo; each role gets a single focused screen (see App.tsx). */
+ * with a Disconnect (switch wallet) button. Each role gets a single focused
+ * screen (see App.tsx). */
 import { useStore } from "../store/store.tsx";
-import { fmtUsd, shortParty } from "../lib/format.ts";
+import { fmtUsd } from "../lib/format.ts";
 import { usePriceFlash } from "../lib/hooks.ts";
 
-const ROLE_COLOR: Record<string, string> = {
-  trader: "var(--blue)", venue: "var(--green)",
-  regulator: "var(--amber)", outsider: "var(--down)",
-};
-
 export function TopBar() {
-  const { snap, market, party, role, disconnect } = useStore();
+  const { snap, market, party, disconnect } = useStore();
   const price = snap.prices[market]?.price ?? 0;
   const flash = usePriceFlash(price);
-  const color = ROLE_COLOR[role] ?? "var(--text)";
+  const hash = party.partyId.split("::")[1] ?? "";
+  const addr = hash ? `${hash.slice(0, 6)}…${hash.slice(-4)}` : "connecting…";
+  const [base, quote] = market.split("-");
 
   return (
     <header className="topbar">
@@ -26,21 +23,19 @@ export function TopBar() {
         </div>
       </div>
 
-      <div className="market-select" style={{ cursor: "default" }} title="The live perpetual market">
-        <span className="sym">{market}</span>
-        <span className={`tnum ${flash ? `flash-${flash}` : ""}`} style={{ fontWeight: 700 }}>{fmtUsd(price)}</span>
+      <div className="market-tag" title="The live perpetual market">
+        <span className="mk-sym">{base}<span className="mk-quote">/{quote}</span></span>
+        <span className="mk-perp">PERP</span>
+        <span className={`mk-px tnum ${flash ? `flash-${flash}` : ""}`}>{fmtUsd(price)}</span>
       </div>
 
       <div className="grow" />
 
-      <div className="conn-pill" style={{ ["--accent" as any]: color }}>
-        <span className="pdot" style={{ background: color }} />
-        <div className="col" style={{ gap: 1 }}>
-          <span style={{ fontWeight: 700, fontSize: 13 }}>{party.label}</span>
-          <span className="muted tnum" style={{ fontSize: 10 }}>{party.partyId ? shortParty(party.partyId) : "connecting…"}</span>
-        </div>
+      <div className="conn-pill" title={party.partyId}>
+        <span className="conn-name">{party.label}</span>
+        <span className="conn-addr tnum">{addr}</span>
       </div>
-      <button className="btn btn-sm btn-ghost" onClick={disconnect} title="Switch to another wallet">Disconnect</button>
+      <button className="btn btn-sm btn-disconnect" onClick={disconnect} title="Switch to another wallet">Disconnect</button>
     </header>
   );
 }

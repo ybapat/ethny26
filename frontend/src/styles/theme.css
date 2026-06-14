@@ -1,70 +1,92 @@
-/* theme.css — simple, classy dark UI.
-   • Background: neutral charcoal (no colour tint).
-   • Accent: a restrained blue, used only for buttons / links / focus / selection.
-   • Price direction & PnL: green (up) / red (down) — on the chart and the numbers.
+/* theme.css — "Confidential Terminal, refined": a premium dark fintech surface.
+   • Surfaces: layered near-black with a faint cool undertone + hairline highlights
+     for real depth (glassy, elevated — not flat).
+   • Accent: a refined electric blue, used for chrome only (brand / buttons / focus).
+   • Trading data is the ONLY saturated colour: green (up/long) / red (down/short).
    • Amber: regulator / audit.
-   (The accent variables keep their --green* names so existing references pick up
-    the blue accent in one place; semantically they are "the accent".) */
+   (Accent vars keep their --green* names so existing references pick up the accent
+    in one place; semantically they are "the accent".) */
 
 :root {
-  /* surfaces — neutral charcoal, no hue */
-  --bg-base: #0b0c0e;
-  --bg-app: #0d0f11;
-  --surface: #141619;
-  --surface-2: #181a1e;
-  --surface-3: #1e2126;
-  --hover: #212429;
+  /* surfaces — layered near-black, faint cool undertone */
+  --bg-base: #08090c;
+  --bg-app: #0a0b0e;
+  --surface: #101217;
+  --surface-2: #15181e;
+  --surface-3: #1c2027;
+  --hover: #21262e;
 
-  /* borders — quiet */
-  --line: #23262b;
-  --line-soft: #1b1e22;
-  --line-strong: #2d3138;
+  /* borders — quiet, faint cool cast */
+  --line: #23272e;
+  --line-soft: #191c22;
+  --line-strong: #2e333c;
 
-  /* accent → blue (text / buttons / focus only) */
+  /* premium depth — top inset hairline + ambient glow */
+  --highlight: rgba(255, 255, 255, 0.05);
+  --highlight-strong: rgba(255, 255, 255, 0.08);
+  --inset: inset 0 1px 0 0 var(--highlight);
+
+  /* accent → refined electric blue (text / buttons / focus only) */
   --green: #4f8bf5;
-  --green-bright: #6fa3ff;
+  --green-bright: #74a6ff;
   --green-dim: #3a68cf;
-  --green-deep: #24407e;
-  --green-soft: rgba(79, 139, 245, 0.12);
+  --green-deep: #21407e;
+  --green-soft: rgba(79, 139, 245, 0.13);
   --green-softer: rgba(79, 139, 245, 0.06);
-  --green-glow: rgba(79, 139, 245, 0.25);
+  --green-glow: rgba(79, 139, 245, 0.32);
 
-  /* trading semantics — green up, red down */
-  --up: #2cc878;
-  --up-soft: rgba(44, 200, 120, 0.12);
-  --down: #ef5165;
-  --down-soft: rgba(239, 81, 101, 0.12);
+  /* trading semantics — green up, red down (the only saturated colour) */
+  --up: #25cc7d;
+  --up-bright: #4fe39b;
+  --up-soft: rgba(37, 204, 125, 0.13);
+  --up-glow: rgba(37, 204, 125, 0.34);
+  --down: #f04d63;
+  --down-bright: #ff7384;
+  --down-soft: rgba(240, 77, 99, 0.13);
+  --down-glow: rgba(240, 77, 99, 0.36);
   /* aliases used around the app */
-  --long: #2cc878;
-  --short: #ef5165;
-  --short-glow: rgba(239, 81, 101, 0.4);
+  --long: var(--up);
+  --short: var(--down);
+  --short-glow: var(--down-glow);
 
   /* roles */
-  --amber: #e3a948;
-  --amber-soft: rgba(227, 169, 72, 0.12);
+  --amber: #e6ab47;
+  --amber-bright: #f5c468;
+  --amber-soft: rgba(230, 171, 71, 0.13);
+  --amber-glow: rgba(230, 171, 71, 0.3);
   --blue: #5ab0ff;
 
   /* dark text used on bright accent fills */
   --on-accent: #06101f;
 
-  /* text — neutral */
-  --text: #e8eaed;
-  --text-mid: #a2a7b0;
-  --text-dim: #6b7079;
-  --text-faint: #43474f;
+  /* text — neutral, tuned contrast steps */
+  --text: #edeef1;
+  --text-mid: #a6abb4;
+  --text-dim: #6d727b;
+  --text-faint: #474b53;
 
   /* type */
-  --font-ui: "Manrope", system-ui, -apple-system, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: "Bricolage Grotesque", "Hanken Grotesk", system-ui, sans-serif;
+  --font-ui: "Hanken Grotesk", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
-  /* radii + shadow — soft, flat */
-  --r-sm: 8px;
+  /* type scale (display) */
+  --fs-hero: clamp(28px, 4vw, 40px);
+  --fs-h1: 22px;
+  --fs-h2: 17px;
+
+  /* radii — sharp, premium */
+  --r-xs: 6px;
+  --r-sm: 9px;
   --r-md: 12px;
   --r-lg: 16px;
-  --r-xl: 20px;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 3px 14px -10px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 14px 38px -24px rgba(0, 0, 0, 0.62);
+  --r-xl: 22px;
 
-  --header-h: 54px;
+  /* shadows — deep, soft, with ambient lift */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 18px -12px rgba(0, 0, 0, 0.65), var(--inset);
+  --shadow-lg: 0 22px 50px -30px rgba(0, 0, 0, 0.78), var(--inset);
+  --shadow-glow: 0 0 0 1px var(--green-glow), 0 8px 30px -12px var(--green-glow);
+
+  --header-h: 56px;
 }

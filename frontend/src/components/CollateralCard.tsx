@@ -60,7 +60,7 @@ export function CollateralCard() {
 
       <button className="btn btn-primary faucet-btn" onClick={fund}>＋ Get {FAUCET_AMOUNT.toLocaleString()} test {meta?.symbol ?? "RWA"}</button>
       <p className="muted" style={{ fontSize: 10.5, lineHeight: 1.5, marginTop: 8 }}>
-        Yield-bearing RWA used as margin. Opening a trade locks some as initial margin; it unlocks on close.
+        Yield-bearing margin — locked when you trade, unlocked on close.
       </p>
     </div>
   );
