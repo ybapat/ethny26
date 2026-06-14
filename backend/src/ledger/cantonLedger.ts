@@ -616,9 +616,9 @@ export function cantonLedgerFromEnv(
     readAs: env.READ_AS ? env.READ_AS.split(",").map((s) => s.trim()).filter(Boolean) : [],
     templateIds: {
       // Package name "perp-dex", confirmed from daml/daml.yaml (SDK 3.4.11).
-      matchedPair: env.TEMPLATE_MATCHED_PAIR ?? "perp-dex:PerpDex.Core:MatchedPair",
-      perpPosition: env.TEMPLATE_PERP_POSITION ?? "perp-dex:PerpDex.Core:PerpPosition",
-      oraclePrice: env.TEMPLATE_ORACLE_PRICE ?? "perp-dex:PerpDex.Oracle:MockOraclePrice",
+      matchedPair: env.TEMPLATE_MATCHED_PAIR ?? "perp-dex-v2:PerpDex.Core:MatchedPair",
+      perpPosition: env.TEMPLATE_PERP_POSITION ?? "perp-dex-v2:PerpDex.Core:PerpPosition",
+      oraclePrice: env.TEMPLATE_ORACLE_PRICE ?? "perp-dex-v2:PerpDex.Oracle:MockOraclePrice",
       verifier: env.TEMPLATE_VERIFIER,
     },
     choices: {

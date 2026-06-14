@@ -21,11 +21,12 @@ import { FEED_IDS } from "./config.ts";
 import { risk } from "./risk/math.ts";
 
 const base = (process.env.LEDGER_BASE_URL ?? "").replace(/\/+$/, "");
-const PKG = "#perp-dex";
+const PKG = "#perp-dex-v2";
 const CORE = `${PKG}:PerpDex.Core`, ORC = `${PKG}:PerpDex.Oracle`;
 const ORACLE_ASSET = process.env.ORACLE_ASSET_ID ?? "ETH/USD";
 const COLL_ASSET = process.env.COLLATERAL_ASSET_ID ?? "T-BILL-USD";
 const NAV = 520.0, MMR = 0.05, FUNDING_SECS = 30, POLL_MS = Number(process.env.POLL_MS ?? 5000);
+const DO_MATCH = (process.env.KEEPER_MATCH ?? "1") !== "0"; // set 0 when the C++ engine matches
 const p = m2mProviderFromEnv()!;
 const prices = dataStreamsPriceSourceFromEnv({ "ETH-USD": FEED_IDS.ETH_USD });
 let userId = "";
@@ -89,18 +90,21 @@ async function tick(w: World) {
   await exer(`${ORC}:MockOraclePrice`, w.oracleCid, "UpdatePrice", { newPrice: dg(px), newTimestamp: iso() }, [w.oracle]);
   w.oracleCid = (await active(`${ORC}:MockOraclePrice`)).find((c: any) => c.arg.assetId === ORACLE_ASSET && c.arg.operator === w.oracle)?.cid ?? w.oracleCid;
 
-  // 2. MATCH resting orders for our venue (price-time priority; cross long.limit >= short.limit)
+  // 2. MATCH resting orders for our venue via MatchOrders (price-time priority).
+  //    Set KEEPER_MATCH=0 to disable when Person 2's C++ engine is doing matching.
   const orders = (await active(`${CORE}:Order`)).filter((o: any) => o.arg.venue === w.venue);
   const longs = orders.filter((o: any) => o.arg.side === "Long").sort((a: any, b: any) => a.arg.createdAt.localeCompare(b.arg.createdAt));
   const shorts = orders.filter((o: any) => o.arg.side === "Short").sort((a: any, b: any) => a.arg.createdAt.localeCompare(b.arg.createdAt));
   let matched = 0;
-  for (const lo of longs) {
-    const so = shorts.find((s: any) => Number(lo.arg.limitPrice) >= Number(s.arg.limitPrice) && Number(s.arg.size) === Number(lo.arg.size));
-    if (!so) continue;
-    shorts.splice(shorts.indexOf(so), 1);
-    const exec = dg(Number(so.arg.limitPrice));
-    const r = await create(`${CORE}:MatchedPair`, { longTrader: lo.arg.trader, shortTrader: so.arg.trader, venue: w.venue, regulator: w.regulator, size: dg(Number(lo.arg.size)), entryPrice: exec, longCollateralQty: dg(Number(lo.arg.collateralQty)), shortCollateralQty: dg(Number(so.arg.collateralQty)), collateralAssetId: COLL_ASSET, accruedFundingLong: "0.0", openedAt: iso(), lastFundingTime: iso(), maintenanceMarginBps: "500", fundingIntervalSecs: String(FUNDING_SECS), liqPenaltyBps: "50" }, [lo.arg.trader, so.arg.trader, w.venue]);
-    if (r.ok) { matched++; await exer(`${CORE}:Order`, lo.cid, "Cancel", {}, [lo.arg.trader]); await exer(`${CORE}:Order`, so.cid, "Cancel", {}, [so.arg.trader]); }
+  if (DO_MATCH) {
+    for (const lo of longs) {
+      const so = shorts.find((s: any) => Number(lo.arg.limitPrice) >= Number(s.arg.limitPrice) && Number(s.arg.size) === Number(lo.arg.size));
+      if (!so) continue;
+      shorts.splice(shorts.indexOf(so), 1);
+      // MatchOrders (controller venue) consumes both orders + creates the MatchedPair.
+      const r = await exer(`${CORE}:Order`, lo.cid, "MatchOrders", { shortOrderCid: so.cid, executionPrice: dg(Number(so.arg.limitPrice)), fillSize: dg(Number(lo.arg.size)) }, [w.venue]);
+      if (r.ok) matched++;
+    }
   }
 
   // 3. RISK per MatchedPair (funding when due, liquidate when equity < MM)

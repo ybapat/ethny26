@@ -21,7 +21,7 @@ const base = (process.env.LEDGER_BASE_URL ?? "").replace(/\/+$/, "");
 // The command-submission `userId` MUST be the authenticated OIDC user (set in main
 // from /v2/authenticated-user), NOT a party name — a mismatch is a 403.
 let userId = "";
-const PKG = process.env.PKG ?? "#perp-dex"; // package-NAME reference needs the leading '#'
+const PKG = process.env.PKG ?? "#perp-dex-v2"; // package-NAME reference needs the leading '#'
 const MOD_CORE = `${PKG}:PerpDex.Core`;
 const MOD_ORACLE = `${PKG}:PerpDex.Oracle`;
 const ORACLE_ASSET = process.env.ORACLE_ASSET_ID ?? "ETH/USD";

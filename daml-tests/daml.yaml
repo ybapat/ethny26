@@ -7,4 +7,4 @@ dependencies:
   - daml-stdlib
   - daml-script
 data-dependencies:
-  - ../daml/.daml/dist/perp-dex-1.1.0.dar
+  - ../daml/.daml/dist/perp-dex-v2-1.0.0.dar

@@ -192,8 +192,11 @@ template PerpPosition
     collateralQty     : Decimal
     collateralAssetId : Text
   where
-    signatory trader, venue
-    observer  regulator
+    -- venue-only signatory so MatchOrders (which has only venue authority) can
+    -- create BOTH legs; the trader is an observer → still sees only their own
+    -- position, counterparty/outsider cannot (privacy preserved).
+    signatory venue
+    observer  trader, regulator
 
     choice RequestClose : ()
       controller trader
@@ -222,8 +225,12 @@ template MatchedPair
     fundingIntervalSecs  : Int
     liqPenaltyBps        : Int
   where
-    signatory longTrader, shortTrader, venue
-    observer  regulator
+    -- venue-only signatory so MatchOrders (venue authority) can create the pair;
+    -- both traders + regulator are observers → they see the position, outsiders
+    -- do not (privacy preserved). The venue is the trusted matcher of orders the
+    -- traders already signed.
+    signatory venue
+    observer  longTrader, shortTrader, regulator
 
     -- ── ApplyFunding ─────────────────────────────────────────────────────────
     -- Pass the CURRENT oracle CIDs — the CIDs returned by the most recent

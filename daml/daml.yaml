@@ -1,6 +1,6 @@
 sdk-version: 3.4.11
-name: perp-dex
-version: 1.1.0
+name: perp-dex-v2
+version: 1.0.0
 source: daml
 dependencies:
   - daml-prim

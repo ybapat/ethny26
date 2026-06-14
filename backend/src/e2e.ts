@@ -19,7 +19,7 @@ import { dataStreamsPriceSourceFromEnv } from "./oracle/fromEnv.ts";
 import { FEED_IDS } from "./config.ts";
 
 const base = (process.env.LEDGER_BASE_URL ?? "").replace(/\/+$/, "");
-const PKG = "#perp-dex";
+const PKG = "#perp-dex-v2";
 const CORE = `${PKG}:PerpDex.Core`;
 const ORC = `${PKG}:PerpDex.Oracle`;
 const ORACLE_ASSET = process.env.ORACLE_ASSET_ID ?? "ETH/USD";
@@ -89,10 +89,12 @@ async function main() {
   const order = (trader: string, side: string) => ({ trader, side, size: d(size), limitPrice: d(entry), collateralQty: d(collQty), collateralAssetId: COLL_ASSET, collateralAllocationCid: "", timeInForce: "GTC", expiresAt: iso(Date.now() + 86400000) });
   ok("PlaceOrder long", await exer(`${CORE}:Market`, marketCid, "PlaceOrder", order(long, "Long"), [long, venue]));
   ok("PlaceOrder short", await exer(`${CORE}:Market`, marketCid, "PlaceOrder", order(short, "Short"), [short, venue]));
+  const longOrder = (await active(`${CORE}:Order`)).find((c: any) => c.arg.trader === long).cid;
+  const shortOrder = (await active(`${CORE}:Order`)).find((c: any) => c.arg.trader === short).cid;
   console.log(`   both orders resting (size ${size} @ ${entry}, collateral ${collQty} each ≈10x)`);
 
-  console.log("\n── 5. MATCH (form the position) ──");
-  ok("MatchedPair", await create(`${CORE}:MatchedPair`, { longTrader: long, shortTrader: short, venue, regulator, size: d(size), entryPrice: d(entry), longCollateralQty: d(collQty), shortCollateralQty: d(collQty), collateralAssetId: COLL_ASSET, accruedFundingLong: "0.0", openedAt: iso(), lastFundingTime: iso(), maintenanceMarginBps: "500", fundingIntervalSecs: "3600", liqPenaltyBps: "50" }, [long, short, venue]));
+  console.log("\n── 5. MATCH via MatchOrders (the engine path — what the C++ engine calls) ──");
+  ok("MatchOrders", await exer(`${CORE}:Order`, longOrder, "MatchOrders", { shortOrderCid: shortOrder, executionPrice: d(entry), fillSize: d(size) }, [venue]));
   let pair = (await active(`${CORE}:MatchedPair`)).find((c: any) => c.arg.longTrader === long)!;
 
   console.log("\n── 6. PRIVACY (the money-shot) ──");
