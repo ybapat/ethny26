@@ -483,9 +483,12 @@ async function tick() {
   if (tickCount % 20 === 0) {
     const freshPor = await fetchChainlinkPoR();
     if (freshPor) {
+      // Refresh ONLY the displayed reserves. Do NOT rotate the on-ledger
+      // PoRAttestation: the Market pins porCid and PlaceOrder does `fetch porCid`,
+      // so UpdateAttestation (consuming) would archive what the Market references →
+      // every order then fails with CONTRACT_NOT_FOUND. The attestation is valid for
+      // 25h, far longer than any session.
       world.por = { reserveAmt: r6(freshPor.reserves), issuedSupply: r6(freshPor.reserves * 0.92), at: nowS() };
-      const pr = await exer(`${ORC}:PoRAttestation`, world.porCid, "UpdateAttestation", { newReserve: dg(world.por.reserveAmt), newSupply: dg(world.por.issuedSupply), newTs: iso() }, [world.oracle]);
-      if (pr.ok) { const livePor = (await active(`${ORC}:PoRAttestation`)).find((c: any) => c.arg.operator === world.oracle); if (livePor) world.porCid = livePor.cid; }
     }
   }
 
