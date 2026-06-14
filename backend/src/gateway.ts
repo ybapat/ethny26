@@ -273,6 +273,10 @@ function saveWorld() {
 
 async function tryRestoreWorld(): Promise<boolean> {
   try {
+    // Restore is OPT-IN. By default always build a fresh, self-consistent world —
+    // restoring a persisted world can reload one whose Market points at on-ledger
+    // contracts (oracle/PoR) that have since been archived → CONTRACT_NOT_FOUND.
+    if (process.env.WORLD_RESTORE !== "1") return false;
     if (!fs.existsSync(WORLD_FILE)) return false;
     const data = JSON.parse(fs.readFileSync(WORLD_FILE, "utf8"));
     const markets = (await active(`${CORE}:Market`)).filter((c: any) => c.arg.venue === data.venue);
