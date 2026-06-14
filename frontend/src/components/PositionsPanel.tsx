@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useStore } from "../store/store.tsx";
 import { MARKETS } from "../domain/config.ts";
 import { fmtPct, fmtQty, fmtSignedUsd, fmtUsd, shortParty } from "../lib/format.ts";
-import type { DerivedPosition } from "../domain/types.ts";
+import type { DerivedPosition, Side } from "../domain/types.ts";
 
 export function PositionsPanel() {
   const { visiblePositions, visibleOrders, isAuthority } = useStore();
@@ -33,12 +33,20 @@ export function PositionsPanel() {
 
 export function PositionsTable({ rows, showCounterparty }: { rows: DerivedPosition[]; showCounterparty: boolean }) {
   const { requestClose, liquidate, party, isAuthority } = useStore();
+  const [pending, setPending] = useState<Record<string, "close" | "liq">>({});
+  const act = (cid: string, side: Side, kind: "close" | "liq") => {
+    if (pending[cid + side]) return;
+    setPending((m) => ({ ...m, [cid + side]: kind }));
+    (kind === "close" ? requestClose : liquidate)(cid, side);
+    // The row unmounts when the pair settles; this just clears the spinner if the
+    // action fails and the position lingers.
+    setTimeout(() => setPending((m) => { const n = { ...m }; delete n[cid + side]; return n; }), 20000);
+  };
   if (rows.length === 0) return <div className="empty">No open positions.</div>;
   return (
-    <table className="tbl">
+    <table className="tbl pos-table">
       <thead>
         <tr>
-          <th>Market</th>
           <th>Side</th>
           <th>Size</th>
           <th>Entry</th>
@@ -60,7 +68,6 @@ export function PositionsTable({ rows, showCounterparty }: { rows: DerivedPositi
           const mine = p.trader === party.partyId;
           return (
             <tr key={p.contractId + p.side}>
-              <td style={{ fontWeight: 600 }}>{p.market}</td>
               <td>
                 <span className={`chip ${p.side === "Long" ? "chip-long" : "chip-short"}`}>{p.side}</span>
               </td>
@@ -92,8 +99,12 @@ export function PositionsTable({ rows, showCounterparty }: { rows: DerivedPositi
                     <span className="chip chip-amber">SETTLING…</span>
                   ) : (
                     <div className="row gap-xs" style={{ justifyContent: "flex-end" }}>
-                      <button className="btn btn-sm btn-ghost" onClick={() => requestClose(p.contractId, p.side)}>Close</button>
-                      <button className="btn btn-sm btn-short" title="Simulate a liquidation of this position" onClick={() => liquidate(p.contractId, p.side)}>Liquidate</button>
+                      <button className="btn btn-sm btn-ghost" disabled={!!pending[p.contractId + p.side]} onClick={() => act(p.contractId, p.side, "close")}>
+                        {pending[p.contractId + p.side] === "close" ? <span className="spinner" /> : "Close"}
+                      </button>
+                      <button className="btn btn-sm btn-short" title="Simulate a liquidation of this position" disabled={!!pending[p.contractId + p.side]} onClick={() => act(p.contractId, p.side, "liq")}>
+                        {pending[p.contractId + p.side] === "liq" ? <span className="spinner" /> : "Liquidate"}
+                      </button>
                     </div>
                   )
                 ) : p.closePending ? (
@@ -112,10 +123,9 @@ export function OrdersTable({ orders, showOwner }: { orders: ReturnType<typeof u
   const { cancelOrder, party, isAuthority } = useStore();
   if (orders.length === 0) return <div className="empty">No resting orders.</div>;
   return (
-    <table className="tbl">
+    <table className="tbl pos-table">
       <thead>
         <tr>
-          <th>Market</th>
           <th>Side</th>
           {showOwner && <th>Trader</th>}
           <th>Limit</th>
@@ -129,7 +139,6 @@ export function OrdersTable({ orders, showOwner }: { orders: ReturnType<typeof u
       <tbody>
         {orders.map((o) => (
           <tr key={o.contractId}>
-            <td style={{ fontWeight: 600 }}>{o.market}</td>
             <td><span className={`chip ${o.side === "Long" ? "chip-long" : "chip-short"}`}>{o.side}</span></td>
             {showOwner && <td className="tnum muted">{shortParty(o.trader)}</td>}
             <td className="tnum">{fmtUsd(o.limitPrice)}</td>

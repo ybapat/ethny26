@@ -1,0 +1,35 @@
+{
+  "venue": "venue-mqdjeoc3::12204e9305ea511feb3ff95e6ea9f4e99d053d07c2e0fe03ffc22e1100ee20882904",
+  "oracle": "oracle-mqdjeoc3::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8",
+  "regulator": "reg-mqdjeoc3::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8",
+  "outsider": "out-mqdjeoc3::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8",
+  "oracleCid": "009e69eb454b26ab0303889a6f7b4ad58665b53e2e8870a1e57c5b730ad435a383ca121220b4a4a30d90d5e109c002aa4a364fc5433c0b8bbc87aec810e92474bd50bf2277",
+  "rwaNAVCid": "00a2478b236692f84ad0153ca920d47cfda880abfc15eae2d4e65320fd13dcf241ca1212208e02e9490b6df5c7d6168361653d1c2f060b7ef2cb922c8ef4b99fa55e6ba344",
+  "porCid": "003c0f4e9b62c0f2c2faf505810894effa73b3fb99c3fce1dcd73b512ad7424916ca121220e4930ebee661adcaa24c0cffec850a7b3c949bd7199892d14bb6d6887428b928",
+  "marketCid": "00db4eb587948bcf08ccc99a9db489d864de9b0964c6ee2894c3ae35ddbd8f1b25ca1212202e8b67777783cf514ebd63eb826e1c8544cb3e425aadbebb1c22ef5bea8ac6ad",
+  "traders": [
+    {
+      "partyId": "mm-mqdjeoc3::12201e2476ef0553f5a4b83b2bf33104343ee898fc93d715128e79f70af2d947aabb",
+      "label": "Market Maker"
+    },
+    {
+      "partyId": "bob::122011a2855cf342ede94d3c0230d2dbad4453612e4b10f8dd08d3bd793eb354abb2",
+      "label": "bob"
+    },
+    {
+      "partyId": "hi::1220e508a5592d745b4dfd531e07db3906f63401432b3f6e701f86b69a381c98535b",
+      "label": "hi"
+    }
+  ],
+  "nav": 520,
+  "por": {
+    "reserveAmt": 116150.741509,
+    "issuedSupply": 106858.682188,
+    "at": 1781426607
+  },
+  "porSource": "Chainlink PoR · WBTC (Ethereum)",
+  "keys": {
+    "venue-mqdjeoc3::12204e9305ea511feb3ff95e6ea9f4e99d053d07c2e0fe03ffc22e1100ee20882904": "uDySxbj5uxSnhEeojGbcRyb2tBbVuHvyG3qyAqNMqObBXnBrzSpF6PQOjJaVR8ZSfeRJh6UqOUb4GVXBFKEYGw==",
+    "mm-mqdjeoc3::12201e2476ef0553f5a4b83b2bf33104343ee898fc93d715128e79f70af2d947aabb": "eiW0xGL1z/ZPEXQ57zA8/K+Lqrl8/g1pcAZe6a5YRUPqTKKprLnQy9/snxu1LGVJLXL/wOhWD4DQOz893Y+NRA=="
+  }
+}

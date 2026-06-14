@@ -30,6 +30,7 @@ import type {
   Order,
   Party,
   PartyRole,
+  SettlementEvent,
   Side,
 } from "../domain/types.ts";
 
@@ -56,6 +57,8 @@ interface StoreValue {
   visibleOrders: Order[];
   /** Positions this party can see (own legs for traders; both for authorities). */
   visiblePositions: DerivedPosition[];
+  /** Settled/liquidated trades this party can see (own for traders; all for authorities). */
+  visibleSettlements: SettlementEvent[];
   /** Aggregated dark-CLOB depth — only authorities may see the full book. */
   book: { bids: DepthLevel[]; asks: DepthLevel[] } | null;
   // actions (thin pass-throughs to the backend)
@@ -133,6 +136,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return out;
   }, [snap, role, isAuthority, party.partyId]);
 
+  const visibleSettlements = useMemo<SettlementEvent[]>(() => {
+    if (role === "outsider") return [];
+    const all = snap.settlements ?? [];
+    if (isAuthority) return all;
+    return all.filter((s) => s.long === party.partyId || s.short === party.partyId);
+  }, [snap.settlements, role, isAuthority, party.partyId]);
+
   const book = useMemo(() => {
     if (role === "outsider") return null;
     const source = isAuthority
@@ -154,6 +164,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     isAuthority,
     visibleOrders,
     visiblePositions,
+    visibleSettlements,
     book,
     placeOrder: backend.placeOrder.bind(backend),
     cancelOrder: backend.cancelOrder.bind(backend),

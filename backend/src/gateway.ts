@@ -194,12 +194,18 @@ const world: {
   ready: boolean;
   traders: Trader[];                 // role "trader" viewpoints (Alice, Bob, + created)
   venue: string; oracle: string; regulator: string; outsider: string;
+  mm: string;                        // Market Maker — the universal counterparty for every user trade
   obs: string[];                     // observers granted on feeds/tokens
   oracleCid: string; rwaNAVCid: string; porCid: string; marketCid: string;
   nav: number;
   por: { reserveAmt: number; issuedSupply: number; at: number };
   porSource: string;
-} = { ready: false, traders: [], venue: "", oracle: "", regulator: "", outsider: "", obs: [], oracleCid: "", rwaNAVCid: "", porCid: "", marketCid: "", nav: NAV0, por: { reserveAmt: 10_000_000, issuedSupply: 9_000_000, at: nowS() }, porSource: "static attestation" };
+} = { ready: false, traders: [], venue: "", oracle: "", regulator: "", outsider: "", mm: "", obs: [], oracleCid: "", rwaNAVCid: "", porCid: "", marketCid: "", nav: NAV0, por: { reserveAmt: 10_000_000, issuedSupply: 9_000_000, at: nowS() }, porSource: "static attestation" };
+
+// Market Maker config — the MM takes the exact opposite of every user order at the
+// live mark, fully collateralised (low leverage) so it's the always-solvent house.
+const MM_LEV = 1;
+const MM_SEED_RWA = 2000;
 
 const candles = new Map<string, { time: number; open: number; high: number; low: number; close: number }[]>();
 const curPrice = new Map<string, number>();
@@ -257,7 +263,7 @@ const WORLD_FILE = process.env.WORLD_FILE ?? "world-state.json";
 function saveWorld() {
   try {
     fs.writeFileSync(WORLD_FILE, JSON.stringify({
-      venue: world.venue, oracle: world.oracle, regulator: world.regulator, outsider: world.outsider,
+      venue: world.venue, oracle: world.oracle, regulator: world.regulator, outsider: world.outsider, mm: world.mm,
       oracleCid: world.oracleCid, rwaNAVCid: world.rwaNAVCid, porCid: world.porCid, marketCid: world.marketCid,
       traders: world.traders, nav: world.nav, por: world.por, porSource: world.porSource,
       keys: Object.fromEntries(keyMap),
@@ -272,7 +278,7 @@ async function tryRestoreWorld(): Promise<boolean> {
     const markets = (await active(`${CORE}:Market`)).filter((c: any) => c.arg.venue === data.venue);
     if (!markets.length) { console.log("[gateway] world-state.json found but market gone — rebuilding"); return false; }
     world.venue = data.venue; world.oracle = data.oracle;
-    world.regulator = data.regulator; world.outsider = data.outsider;
+    world.regulator = data.regulator; world.outsider = data.outsider; world.mm = data.mm ?? "";
     world.marketCid = markets[0].cid;
     world.traders = data.traders ?? []; world.nav = data.nav ?? NAV0;
     world.obs = [world.venue, world.regulator, world.outsider, ...world.traders.map((t: any) => t.partyId)];
@@ -345,23 +351,11 @@ async function setup() {
 
   console.log("[gateway] seeding market maker…");
   const mmParty = await onboardExternal(`mm-${ts}`);
+  world.mm = mmParty;
   world.traders.push({ partyId: mmParty, label: "Market Maker" });
   world.obs.push(mmParty);
-  await mintDelta(mmParty, 20); // 20 RWA tokens at NAV ~520 ≈ $10k collateral
-  const MM_SPREAD = 0.005; // 50 bps per level; FV = live Chainlink ETH/USD price
-  const MM_SIZE = 0.5;
-  const MM_LEV = 5;
-  const mmQuotes: Array<[string, number]> = [
-    ["Long",  1 - MM_SPREAD],
-    ["Long",  1 - 2 * MM_SPREAD],
-    ["Short", 1 + MM_SPREAD],
-    ["Short", 1 + 2 * MM_SPREAD],
-  ];
-  for (const [side, mult] of mmQuotes) {
-    const r = await placeAndLock(mmParty, side, MM_SIZE, r2(entry * mult), MM_LEV);
-    if (!r.ok) console.warn(`[gateway] MM quote failed (${side} @${r2(entry * mult)}): ${r.err}`);
-  }
-  console.log(`[gateway] market maker ready (${mmParty.split("::")[0]}): quoted ±${MM_SPREAD * 100}bps and ±${MM_SPREAD * 200}bps around Chainlink ETH/USD ${entry}`);
+  await mintDelta(mmParty, MM_SEED_RWA); // deep inventory so it can take any user trade
+  console.log(`[gateway] market maker ready (${mmParty.split("::")[0]}): universal counterparty, ${MM_SEED_RWA} RWA inventory, fills every order at the live Chainlink mark.`);
 
   world.ready = true;
   console.log(`[gateway] world ready. venue=${world.venue.split("::")[0]} entry≈${entry}`);
@@ -407,21 +401,36 @@ async function placeAndLock(trader: string, side: string, size: number, limitPri
   return { ok: true, collQty };
 }
 
+// The Market Maker is the UNIVERSAL COUNTERPARTY: it takes the exact opposite of
+// every marketable user order at the live mark. Users never match each other, so
+// each position is an independent user↔MM pair — closing one can't touch another's
+// (mirrors how a real perp DEX clears against the protocol, not a fixed peer).
 async function matchBook(): Promise<number> {
-  if (!DO_MATCH) return 0;
+  if (!DO_MATCH || !world.mm) return 0;
+  const mark = curPrice.get(UI_MARKET)!;
   const orders = (await active(`${CORE}:Order`)).filter((o: any) => o.arg.venue === world.venue);
-  const longs = orders.filter((o: any) => o.arg.side === "Long").sort((a: any, b: any) => Number(b.arg.limitPrice) - Number(a.arg.limitPrice) || a.arg.createdAt.localeCompare(b.arg.createdAt));
-  const shorts = orders.filter((o: any) => o.arg.side === "Short").sort((a: any, b: any) => Number(a.arg.limitPrice) - Number(b.arg.limitPrice) || a.arg.createdAt.localeCompare(b.arg.createdAt));
+  const userOrders = orders.filter((o: any) => o.arg.trader !== world.mm);
   let matched = 0;
-  for (const lo of longs) {
-    const so = shorts.find((s: any) => Number(lo.arg.limitPrice) >= Number(s.arg.limitPrice));
-    if (!so) continue;
-    shorts.splice(shorts.indexOf(so), 1);
-    const mark = curPrice.get(UI_MARKET)!;
-    const px = r2(Math.min(Number(lo.arg.limitPrice), Math.max(Number(so.arg.limitPrice), mark)));
-    const fillSize = Math.min(Number(lo.arg.size), Number(so.arg.size));
-    const r = await exerExt(`${CORE}:Order`, lo.cid, "MatchOrders", { shortOrderCid: so.cid, executionPrice: dg(px), fillSize: dg(fillSize) }, [world.venue]);
-    if (r.ok) { matched++; fills.unshift({ id: idg("fill"), market: UI_MARKET, price: px, size: fillSize, takerSide: "Long", at: nowS() }); fills.length = Math.min(fills.length, MAX_TAPE); }
+  for (const uo of userOrders) {
+    const side = uo.arg.side as string;
+    const size = Number(uo.arg.size);
+    const userLimit = Number(uo.arg.limitPrice);
+    // Marketable vs the live mark? (else it's a resting limit — filled when the mark crosses)
+    const marketable = side === "Long" ? userLimit >= mark - 1e-9 : userLimit <= mark + 1e-9;
+    if (!marketable) continue;
+    const execPx = r2(mark);
+    const oppSide = side === "Long" ? "Short" : "Long";
+    // MM posts the exact opposite, same size, at the mark (fully collateralised house).
+    const placed = await placeAndLock(world.mm, oppSide, size, execPx, MM_LEV);
+    if (!placed.ok) { console.warn(`[gateway] MM fill place failed: ${placed.err}`); continue; }
+    const mmOrders = (await active(`${CORE}:Order`)).filter((o: any) => o.arg.venue === world.venue && o.arg.trader === world.mm && o.arg.side === oppSide && Number(o.arg.size) === size);
+    const mo = mmOrders[mmOrders.length - 1];
+    if (!mo) { console.warn("[gateway] MM order not found after place"); continue; }
+    const longCid = side === "Long" ? uo.cid : mo.cid;
+    const shortCid = side === "Long" ? mo.cid : uo.cid;
+    const r = await exerExt(`${CORE}:Order`, longCid, "MatchOrders", { shortOrderCid: shortCid, executionPrice: dg(execPx), fillSize: dg(size) }, [world.venue]);
+    if (r.ok) { matched++; fills.unshift({ id: idg("fill"), market: UI_MARKET, price: execPx, size, takerSide: side, at: nowS() }); fills.length = Math.min(fills.length, MAX_TAPE); }
+    else console.warn(`[gateway] MM match failed: ${JSON.stringify(r.j).slice(0, 150)}`);
   }
   return matched;
 }
@@ -509,7 +518,7 @@ async function evaluateRisk(fundingDue: boolean) {
         liquidated++;
         const view = { size, entryPrice: entry, long: { trader: a.longTrader, collateralQty: Number(a.longCollateralQty) }, short: { trader: a.shortTrader, collateralQty: Number(a.shortCollateralQty) } };
         await creditLiquidation(view, breach, px);
-        recordLiquidation(pr.cid, breach, px, size, entry, Number(a.accruedFundingLong), breach === "Long" ? longEq : shortEq, mm);
+        recordLiquidation(pr.cid, breach, px, size, entry, Number(a.accruedFundingLong), breach === "Long" ? longEq : shortEq, mm, a.longTrader, a.shortTrader);
       }
     }
   }
@@ -517,10 +526,20 @@ async function evaluateRisk(fundingDue: boolean) {
   lastCycle = { at: t, evaluated: pairRows.length, fundingApplied: funded, liquidated, settled: 0, skippedStale: 0, skippedNoConfig: 0, perPair: [] };
 }
 
-function recordLiquidation(cid: string, side: string, mark: number, size: number, entry: number, accrued: number, eq: number, mm: number) {
-  liquidations.unshift({ id: idg("liq"), market: UI_MARKET, contractId: cid, side, markPrice: mark, equity: eq, maintenanceMargin: mm, seized: r6(Math.abs(risk.unrealizedPnl(side as any, size, entry, mark))), at: nowS() });
+function recordLiquidation(cid: string, side: string, mark: number, size: number, entry: number, accrued: number, eq: number, mm: number, long = "", short = "") {
+  // Isolated margin: a liquidated trader loses their POSTED COLLATERAL, never more.
+  // The crash mark overshoots the liq threshold (to force the breach), so the raw
+  // mark-to-market loss can exceed collateral — cap it at the collateral actually
+  // posted (collateralValue = equity − unrealized PnL at the crash mark).
+  const uPnl = risk.unrealizedPnl(side as any, size, entry, mark);
+  const collVal = Math.max(0, eq - uPnl);
+  const loss = r6(Math.min(Math.abs(uPnl), collVal));
+  // Effective liquidation price — the price at which the capped loss is realised, so
+  // (exit − entry) × size reconciles with the displayed PnL (not the overshoot crash).
+  const effExit = r2(side === "Short" ? entry + loss / size : entry - loss / size);
+  liquidations.unshift({ id: idg("liq"), market: UI_MARKET, contractId: cid, side, markPrice: effExit, equity: eq, maintenanceMargin: mm, seized: loss, at: nowS() });
   liquidations.length = Math.min(liquidations.length, MAX_TAPE);
-  settlements.unshift({ id: idg("set"), market: UI_MARKET, contractId: cid, closingSide: side, exitPrice: mark, realizedPnl: -Math.abs(risk.unrealizedPnl(side as any, size, entry, mark)), netFunding: accrued, at: nowS() });
+  settlements.unshift({ id: idg("set"), market: UI_MARKET, contractId: cid, closingSide: side, exitPrice: effExit, realizedPnl: -loss, netFunding: accrued, at: nowS(), long, short, size, entryPrice: entry, kind: "Liquidation" });
   settlements.length = Math.min(settlements.length, MAX_TAPE);
 }
 
@@ -612,7 +631,7 @@ async function handleAction(path: string, body: any): Promise<{ ok: boolean; err
       if ((await freeOf(trader)) < need - 1e-6) return { ok: false, error: "insufficient free RWA collateral — use the faucet" };
       const r = await placeAndLock(trader, side, size, r2(px), leverage || 5);
       if (!r.ok) return { ok: false, error: r.err };
-      await matchBook(); await refresh();
+      await refresh(); // the keeper tick fills it against the MM a beat later
       return { ok: true };
     }
     case "/api/cancel": {
@@ -634,7 +653,7 @@ async function handleAction(path: string, body: any): Promise<{ ok: boolean; err
       const r = await exerExt(`${CORE}:MatchedPair`, found.cid, "SettleClose", { oracleCid: world.oracleCid, rwaNAVCid: world.rwaNAVCid }, [v]);
       if (r.ok) {
         await creditClose(pr, exit);
-        settlements.unshift({ id: idg("set"), market: UI_MARKET, contractId: pr.contractId, closingSide: side, exitPrice: exit, realizedPnl: risk.realizedPnl(side, pr.size, pr.entryPrice, exit), netFunding: pr.accruedFundingLong, at: nowS() });
+        settlements.unshift({ id: idg("set"), market: UI_MARKET, contractId: pr.contractId, closingSide: side, exitPrice: exit, realizedPnl: risk.realizedPnl(side, pr.size, pr.entryPrice, exit), netFunding: pr.accruedFundingLong, at: nowS(), long: pr.long.trader, short: pr.short.trader, size: pr.size, entryPrice: pr.entryPrice, kind: "Close" });
         settlements.length = Math.min(settlements.length, MAX_TAPE);
       }
       await refresh();
@@ -655,7 +674,7 @@ async function handleAction(path: string, body: any): Promise<{ ok: boolean; err
       const eq = risk.equity((side === "Long" ? pr.long.collateralQty : pr.short.collateralQty) * world.nav, risk.unrealizedPnl(side, pr.size, pr.entryPrice, crash), 0);
       const mm = risk.maintenanceMargin(pr.size, crash, MMR);
       const r = await exerExt(`${CORE}:MatchedPair`, found.cid, "Liquidate", { breachingSide: side, oracleCid: world.oracleCid, rwaNAVCid: world.rwaNAVCid }, [v]);
-      if (r.ok) { await creditLiquidation(pr, side, crash); recordLiquidation(pr.contractId, side, crash, pr.size, pr.entryPrice, pr.accruedFundingLong, eq, mm); }
+      if (r.ok) { await creditLiquidation(pr, side, crash); recordLiquidation(pr.contractId, side, crash, pr.size, pr.entryPrice, pr.accruedFundingLong, eq, mm, pr.long.trader, pr.short.trader); }
       await refresh();
       return r.ok ? { ok: true } : { ok: false, error: JSON.stringify(r.j).slice(0, 200) };
     }
@@ -739,7 +758,7 @@ async function handleAction(path: string, body: any): Promise<{ ok: boolean; err
       const exec = await executeExt(pend.prepJ, [pend.trader, world.venue], { [pend.trader]: body.signature });
       if (!exec.ok) return { ok: false, error: JSON.stringify(exec.j).slice(0, 200) };
       await mintDelta(pend.trader, -pend.collQty);   // lock collateral
-      await matchBook(); await refresh();
+      await refresh(); // the keeper tick fills it against the MM a beat later
       return { ok: true };
     }
     default: return { ok: false, error: "unknown action" };

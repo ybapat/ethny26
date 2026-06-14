@@ -1,7 +1,7 @@
 /** CollateralCard.tsx — your RWA collateral at a glance + a faucet to fund it.
  * This is the yield-bearing tokenized RWA used as margin (CANTON-RWA.md). The
  * "Get test RWA" faucet tops up your free collateral so you can open a trade. */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "../store/store.tsx";
 import { INSTRUMENTS, MARKETS } from "../domain/config.ts";
 import { fmtPct, fmtQty, fmtUsd } from "../lib/format.ts";
@@ -20,11 +20,26 @@ export function CollateralCard() {
   const locked = holding?.locked ?? 0;
   const por = snap.por[inst];
   const [flash, setFlash] = useState(false);
+  const [funding, setFunding] = useState(false);
+  const startFree = useRef(free);
+
+  // Clear the spinner the moment the minted collateral actually lands on-ledger
+  // (the free balance rises on the next snapshot), then flash the number.
+  useEffect(() => {
+    if (funding && free > startFree.current + 1e-9) {
+      setFunding(false);
+      setFlash(true);
+      const t = setTimeout(() => setFlash(false), 1000);
+      return () => clearTimeout(t);
+    }
+  }, [free, funding]);
 
   const fund = () => {
+    if (funding) return;
+    startFree.current = free;
+    setFunding(true);
     deposit(party.partyId, inst, FAUCET_AMOUNT);
-    setFlash(true);
-    setTimeout(() => setFlash(false), 1200);
+    setTimeout(() => setFunding(false), 20000); // safety fallback if nothing lands
   };
 
   return (
@@ -58,7 +73,9 @@ export function CollateralCard() {
         </div>
       </div>
 
-      <button className="btn btn-primary faucet-btn" onClick={fund}>＋ Get {FAUCET_AMOUNT.toLocaleString()} test {meta?.symbol ?? "RWA"}</button>
+      <button className="btn btn-primary faucet-btn" disabled={funding} onClick={fund}>
+        {funding ? <><span className="spinner" /> Minting…</> : <>＋ Get {FAUCET_AMOUNT.toLocaleString()} test {meta?.symbol ?? "RWA"}</>}
+      </button>
       <p className="muted" style={{ fontSize: 10.5, lineHeight: 1.5, marginTop: 8 }}>
         Yield-bearing margin — locked when you trade, unlocked on close.
       </p>

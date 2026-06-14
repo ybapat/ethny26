@@ -166,6 +166,12 @@ export interface SettlementEvent {
   realizedPnl: number;
   netFunding: number;
   at: number;
+  /** Trade-history attribution (the two parties whose position settled). */
+  long?: string;
+  short?: string;
+  size?: number;
+  entryPrice?: number;
+  kind?: "Close" | "Liquidation";
 }
 
 /**

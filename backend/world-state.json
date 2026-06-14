@@ -1,0 +1,32 @@
+{
+  "venue": "venue-mqdll93k::122084d91f01d857672493087c64d4207010d25cf7d67023701dea527df85c4d122d",
+  "oracle": "oracle-mqdll93k::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8",
+  "regulator": "reg-mqdll93k::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8",
+  "outsider": "out-mqdll93k::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8",
+  "mm": "mm-mqdll93k::12206efff9e89c21ea6b464c4c4781b8f2c6ab2f8040f3a7d017166aad3d1a5acf34",
+  "oracleCid": "00203def8a8db98e845240f01d22c2930744d754aa20b3b633792f3339f17cb0c1ca1212200acaea3edcdbeb5956ba621bce9e44a50f75607556d498d67c5f550c54e35684",
+  "rwaNAVCid": "009b5b009d60c8db25e97723adfe61eb1ca618dac3c31d04571c82fe640e468bf9ca121220372e1d3793f3603fb40a6b04de947f34857b4f5b1e63a653069b18fff0cb0684",
+  "porCid": "0063570bd6ad4dc23f6d064c7dadb23a614d2eb9c020427ac9ddc01ad48fd863bfca121220bc3c89fa0eb430723c4f0f7d6688827d153907a8e69559bc91da2a181197a0ef",
+  "marketCid": "009b5b3354379ff1192ad894a8f3d57269ca11942395544d78032bcefd13e063bbca121220df2eb98019ec4353f077302a2eed98dc75ec17c260e3a93e5fa45b9ca1c92e2d",
+  "traders": [
+    {
+      "partyId": "mm-mqdll93k::12206efff9e89c21ea6b464c4c4781b8f2c6ab2f8040f3a7d017166aad3d1a5acf34",
+      "label": "Market Maker"
+    },
+    {
+      "partyId": "doshi::12205646381df20103e237939bb93dbc0e5227e1364ae130f3911e62f74ddcaa66ab",
+      "label": "doshi"
+    }
+  ],
+  "nav": 520,
+  "por": {
+    "reserveAmt": 116150.741509,
+    "issuedSupply": 106858.682188,
+    "at": 1781430273
+  },
+  "porSource": "Chainlink PoR · WBTC (Ethereum)",
+  "keys": {
+    "venue-mqdll93k::122084d91f01d857672493087c64d4207010d25cf7d67023701dea527df85c4d122d": "s1IX3quzU6+oKNe0AZG2QTNIvbK4N/wYeyT4JxFFy3a1f/1/aHfSqRtGCM8GmrBkNV0dB9pQvx1G05g3t/N9Fg==",
+    "mm-mqdll93k::12206efff9e89c21ea6b464c4c4781b8f2c6ab2f8040f3a7d017166aad3d1a5acf34": "J8AErK8n+7vkFP/f5R2C8xddqn2lzGbbQ1IDJE6+9at+2gNG0OLYW567oBhTpY6s1XhhW0qV4c8PKUi1wQKpRA=="
+  }
+}

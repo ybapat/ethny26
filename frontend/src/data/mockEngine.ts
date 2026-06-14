@@ -618,6 +618,11 @@ export class MockEngine {
       realizedPnl: rpnl,
       netFunding,
       at: now(),
+      long: pair.long.trader,
+      short: pair.short.trader,
+      size: pair.size,
+      entryPrice: pair.entryPrice,
+      kind: "Close",
     });
     this.settlements = this.settlements.slice(0, MAX_TAPE);
     this.pairs = this.pairs.filter((p) => p.contractId !== pair.contractId);

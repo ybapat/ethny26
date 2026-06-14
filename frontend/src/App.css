@@ -146,19 +146,19 @@
 .trade-grid {
   height: 100%;
   display: grid;
-  grid-template-columns: 1fr 416px;
+  grid-template-columns: minmax(0, 1fr) 416px;
   grid-template-rows: minmax(0, 1.2fr) minmax(0, 1fr);
   grid-template-areas:
     "chart ticket"
     "bottom ticket";
   gap: 14px;
 }
-.area-chart { grid-area: chart; min-height: 0; }
-.area-bottom { grid-area: bottom; min-height: 0; }
-.area-ticket { grid-area: ticket; min-height: 0; }
+.area-chart { grid-area: chart; min-width: 0; min-height: 0; }
+.area-bottom { grid-area: bottom; min-width: 0; min-height: 0; }
+.area-ticket { grid-area: ticket; min-width: 0; min-height: 0; }
 
 .fill { height: 100%; display: flex; flex-direction: column; }
-.fill .panel-body.scroll-y, .fill .card-body.scroll-y { flex: 1; min-height: 0; }
+.fill .panel-body.scroll-y, .fill .card-body.scroll-y { flex: 1; min-height: 0; overflow-x: auto; }
 
 /* generic page grids */
 .page { height: 100%; overflow-y: auto; display: grid; gap: 18px; align-content: start; }
@@ -167,7 +167,7 @@
 
 @media (max-width: 1200px) {
   .trade-grid {
-    grid-template-columns: 1fr 384px;
+    grid-template-columns: minmax(0, 1fr) 384px;
     grid-template-rows: minmax(0, 1.4fr) minmax(0, 1fr);
   }
   .page-2 { grid-template-columns: 1fr; }
