@@ -32,6 +32,7 @@ import type {
   SettleCloseArgs,
   Side,
 } from "../types.ts";
+import { m2mProviderFromEnv } from "./auth.ts";
 
 /* ====================================================================== *
  * Config
@@ -60,8 +61,14 @@ export interface CantonChoices {
 export interface CantonLedgerOpts {
   /** e.g. "http://localhost:7575" — no trailing slash required. */
   baseUrl: string;
-  /** Optional JWT; if set, sent as `Authorization: Bearer <token>`. */
+  /** Optional STATIC JWT; if set, sent as `Authorization: Bearer <token>`. */
   authToken?: string;
+  /**
+   * Optional token provider (preferred for the Seaport validator): an object
+   * whose getToken() returns a fresh JWT, auto-refreshing before expiry
+   * (see auth.ts M2mTokenProvider). Takes precedence over authToken.
+   */
+  tokenProvider?: { getToken: () => Promise<string> };
   userId: string;
   /** [venueParty]. */
   actAs: string[];
@@ -372,6 +379,7 @@ function makeCommandId(prefix: string): string {
 export class CantonLedger implements LedgerClient {
   private readonly baseUrl: string;
   private readonly authToken?: string;
+  private readonly tokenProvider?: { getToken: () => Promise<string> };
   private readonly userId: string;
   private readonly actAs: string[];
   private readonly readAs: string[];
@@ -382,6 +390,7 @@ export class CantonLedger implements LedgerClient {
   constructor(opts: CantonLedgerOpts) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.authToken = opts.authToken;
+    this.tokenProvider = opts.tokenProvider;
     this.userId = opts.userId;
     this.actAs = opts.actAs;
     this.readAs = opts.readAs ?? [];
@@ -400,19 +409,26 @@ export class CantonLedger implements LedgerClient {
 
   /* ----------------------------- HTTP ---------------------------------- */
 
-  private headers(): Record<string, string> {
+  /** Resolve a bearer token: token provider (auto-refresh) preferred, else static. */
+  private async resolveToken(): Promise<string | undefined> {
+    if (this.tokenProvider) return this.tokenProvider.getToken();
+    return this.authToken;
+  }
+
+  private async headers(): Promise<Record<string, string>> {
     const h: Record<string, string> = {
       "content-type": "application/json",
       accept: "application/json",
     };
-    if (this.authToken) h.authorization = `Bearer ${this.authToken}`;
+    const token = await this.resolveToken();
+    if (token) h.authorization = `Bearer ${token}`;
     return h;
   }
 
   /** GET <baseUrl><path> → parsed JSON; non-2xx throws with status + body. */
   private async get(path: string): Promise<any> {
     const url = `${this.baseUrl}${path}`;
-    const res = await fetch(url, { method: "GET", headers: this.headers() });
+    const res = await fetch(url, { method: "GET", headers: await this.headers() });
     const text = await res.text();
     if (!res.ok) {
       throw new Error(`GET ${path} → HTTP ${res.status}: ${text}`);
@@ -425,7 +441,7 @@ export class CantonLedger implements LedgerClient {
     const url = `${this.baseUrl}${path}`;
     const res = await fetch(url, {
       method: "POST",
-      headers: this.headers(),
+      headers: await this.headers(),
       body: JSON.stringify(body),
     });
     const text = await res.text();
@@ -591,6 +607,9 @@ export function cantonLedgerFromEnv(
   const venueParty = env.VENUE_PARTY ?? "Venue";
   return new CantonLedger({
     baseUrl: env.LEDGER_BASE_URL ?? "http://localhost:7575",
+    // Prefer the M2M OIDC provider (auto-refresh) when OIDC creds are present;
+    // fall back to a static LEDGER_AUTH_TOKEN, else no auth (local sandbox).
+    tokenProvider: m2mProviderFromEnv(env),
     authToken: env.LEDGER_AUTH_TOKEN,
     userId: env.USER_ID ?? "venue",
     actAs: [venueParty],
