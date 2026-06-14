@@ -1,0 +1,1 @@
+- [No Co-Authored-By in commit messages](feedback_no_coauthored_by.md) — never add Claude attribution to git commits

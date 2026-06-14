@@ -9,18 +9,17 @@
  *   - TIMER-DRIVEN: a fallback interval also runs a cycle so FUNDING fires on its
  *     schedule and the keeper stays alive even if the socket goes quiet.
  *
- * The only remaining stand-in is the ledger (MockLedger) — swap it for the real
- * @c7-digital/ledger Canton client once Person 1's Daml DAR lands.
+ * Uses the real CantonLedger client (cantonLedger.ts) wired to the perp-dex DAR.
  *
  * Run:  DS_API_KEY=… DS_USER_SECRET=… npm run live:chainlink   (loads .env)
  */
 import readline from "node:readline";
-import { MockLedger } from "./ledger/mockLedger.ts";
+import { cantonLedgerFromEnv } from "./ledger/cantonLedger.ts";
 import { risk } from "./risk/math.ts";
 import { runTriggerCycle } from "./loop/triggerLoop.ts";
 import { DEFAULT_MARKET, FEED_IDS } from "./config.ts";
 import { dataStreamsWsPriceSourceFromEnv, readDsEnv } from "./oracle/fromEnv.ts";
-import type { MatchedPair, OraclePrice, PriceSource } from "./types.ts";
+import type { OraclePrice, PriceSource } from "./types.ts";
 import type { DataStreamsWsPriceSource } from "./oracle/wsPriceSource.ts";
 
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -65,27 +64,8 @@ async function main() {
   ws.start();
   const open = await ws.waitForFirst(market, 15_000);
 
-  const entry = open.price;
-  const size = 10;
-  const collateralQty = (size * entry * cfg.initialMarginRate) / navValue;
-  const t = nowSec();
-  const pair: MatchedPair = {
-    contractId: "pair-1",
-    market,
-    collateralInstrument: cfg.collateralInstrument,
-    size,
-    entryPrice: entry,
-    long: { trader: "Alice", collateralQty },
-    short: { trader: "Bob", collateralQty },
-    accruedFundingLong: 0,
-    lastFundingTime: t,
-    openedAt: t,
-  };
-  const ledger = new MockLedger([pair]);
-  console.log(
-    `Opened: Alice LONG / Bob SHORT ${size} @ ${entry} (live), ${collateralQty.toFixed(2)} collateral each. ` +
-      `Liq ~±${(cfg.initialMarginRate - cfg.maintenanceMarginRate) * 100}% move.\n`,
-  );
+  console.log(`Initial price: ${market}=${open.price} — starting trigger loop against Canton.\n`);
+  const ledger = cantonLedgerFromEnv();
 
   // Throttled cycle runner shared by the push handler and the fallback timer.
   let lastRun = 0;

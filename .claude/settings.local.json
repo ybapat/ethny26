@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/yashbapat/ethny26 log --oneline -10)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'feat\\(matching-engine\\): scaffold TS/Node project *)",
+      "Bash(git rm *)",
+      "Bash(git commit -m 'feat\\(matching-engine\\): replace TS scaffold with C++ CMake project *)",
+      "Bash(git commit -m 'feat\\(matching-engine\\): add types and ledger client interface *)",
+      "Bash(git commit -m 'feat\\(matching-engine\\): price-time-priority orderbook + tests *)",
+      "Bash(git commit -m 'feat\\(matching-engine\\): matching engine core + tests *)",
+      "Bash(git commit -m 'feat\\(matching-engine\\): Boost.Beast ledger client + ACS crash recovery *)",
+      "Bash(git commit -m 'feat\\(matching-engine\\): main entry point + reconnecting WS event loop *)",
+      "Bash(gh pr *)",
+      "Bash(git commit -m 'fix\\(matching-engine\\): add readAs+userId to WS subscription and ACS fetch *)",
+      "Bash(git push *)",
+      "Bash(git commit -m 'fix\\(matching-engine\\): BUG-1 time-sort, BUG-2 residual eviction *)",
+      "Bash(git commit -m 'feat\\(matching-engine\\): self-trade prevention *)",
+      "Bash(git commit -m 'fix\\(matching-engine\\): JWT auth, TLS, submit timeout, offset robustness, backoff *)",
+      "Bash(gh auth *)",
+      "Bash(curl *)",
+      "Bash(git ls-tree *)",
+      "Bash(grep -E \"^#{1,3} |TODO|todo|left|missing|implement|status|track\")",
+      "Bash(git pull *)",
+      "Bash(node *)",
+      "Bash(npm test *)",
+      "Bash(python3 -m json.tool)"
+    ]
+  }
+}

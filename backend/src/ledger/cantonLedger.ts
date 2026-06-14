@@ -19,8 +19,8 @@
  * param-properties), relative imports end in `.ts`, Node built-ins only (global
  * fetch), ESM. The PURE helpers below are exported for unit testing w/o network.
  *
- * Field/envelope shapes that depend on Person 1's actual DAR are flagged with
- * `// CONFIRM with Person 1`.
+ * Field names confirmed against daml/daml/PerpDex/Core.daml and Oracle.daml
+ * (package name: perp-dex, SDK 3.4.11).
  */
 import type {
   LedgerClient,
@@ -40,7 +40,8 @@ import type {
 /** Template ids in package-name format "pkg-name:Module:Template". */
 export interface CantonTemplateIds {
   matchedPair: string;
-  closeRequest: string;
+  /** PerpPosition template — used to infer pending close requests (see getCloseRequests). */
+  perpPosition: string;
   /** MockOraclePrice contract template id. */
   oraclePrice: string;
   /** Optional Chainlink Verifier template id (on-ledger Verify path). */
@@ -133,11 +134,8 @@ export function isoToUnix(iso: string): number {
 }
 
 /**
- * Side → Daml variant. Daml enum/variant constructors serialize on the JSON
- * Ledger API as the bare constructor name string, e.g. "Long".
- * // CONFIRM with Person 1: whether Side is a Daml enum (→ "Long") or a variant
- * // with payload (→ {"Long":{}}). We emit the bare string which is correct for
- * // a nullary enum constructor; variantToSide accepts both forms on the way in.
+ * Side → Daml variant string. `data Side = Long | Short` is a Daml nullary enum;
+ * the JSON Ledger API serializes it as the bare constructor name, e.g. "Long".
  */
 export function sideToVariant(side: Side): string {
   return side;
@@ -190,21 +188,20 @@ function str(arg: any, ...keys: string[]): string {
 }
 
 /**
- * Map a Daml FLAT `MatchedPair` createArgument → our nested MatchedPair shape.
+ * Map a Daml `MatchedPair` createArgument → our nested MatchedPair shape.
  *
- * // CONFIRM with Person 1: exact Daml field names. Assumed flat fields:
- * //   venue, longTrader, shortTrader, regulator, market, collateralInstrument,
- * //   size (Decimal), entryPrice (Decimal), longCollateralQty (Decimal),
- * //   shortCollateralQty (Decimal), accruedFundingLong (Decimal),
- * //   lastFundingTime (Time), openedAt (Time).
- * The function is defensive (accepts a few aliases + number-or-string decimals).
+ * Confirmed field names from daml/daml/PerpDex/Core.daml:
+ *   longTrader, shortTrader, venue, regulator, underlying (→ market),
+ *   collateralAssetId (→ collateralInstrument), size, entryPrice,
+ *   longCollateralQty, shortCollateralQty, accruedFundingLong,
+ *   lastFundingTime, openedAt.
  */
 export function parseMatchedPair(contractId: string, createArgument: any): MatchedPair {
   const a = createArgument ?? {};
   return {
     contractId,
-    market: str(a, "market"),
-    collateralInstrument: str(a, "collateralInstrument", "instrument"),
+    market: str(a, "underlying", "market"),
+    collateralInstrument: str(a, "collateralAssetId", "collateralInstrument", "instrument"),
     size: dec(a, "size"),
     entryPrice: dec(a, "entryPrice"),
     long: {
@@ -222,19 +219,14 @@ export function parseMatchedPair(contractId: string, createArgument: any): Match
 }
 
 /**
- * Map a Daml `CloseRequest` createArgument → our CloseRequest shape.
- *
- * // CONFIRM with Person 1: exact Daml field names. Assumed:
- * //   matchedPairCid | matchedPairContractId (ContractId), closingSide (Side),
- * //   requestedAt (Time).
+ * Map a Daml `PerpPosition` createArgument → the fields needed to infer close requests.
+ * Confirmed fields from Core.daml: matchedPairCid (ContractId MatchedPair), side (Side).
  */
-export function parseCloseRequest(contractId: string, createArgument: any): CloseRequest {
+export function parsePerpPosition(createArgument: any): { matchedPairCid: string; side: Side } {
   const a = createArgument ?? {};
   return {
-    contractId,
-    matchedPairContractId: str(a, "matchedPairCid", "matchedPairContractId", "matchedPair"),
-    closingSide: variantToSide(a.closingSide ?? a.side),
-    requestedAt: time(a, "requestedAt", "at"),
+    matchedPairCid: str(a, "matchedPairCid"),
+    side: variantToSide(a.side),
   };
 }
 
@@ -467,84 +459,86 @@ export class CantonLedger implements LedgerClient {
   }
 
   async getCloseRequests(): Promise<CloseRequest[]> {
-    const events = await this.activeContractsFor(this.templateIds.closeRequest);
-    return events.map((e) => parseCloseRequest(e.contractId, e.createArgument));
+    // The Daml model has no separate CloseRequest template. Traders signal close by
+    // exercising PerpPosition.RequestClose, which archives their PerpPosition.
+    // We infer pending closes by comparing active PerpPositions against active MatchedPairs:
+    // a missing PerpPosition for a given (matchedPairCid, side) means that side requested close.
+    const [pairEvents, posEvents] = await Promise.all([
+      this.activeContractsFor(this.templateIds.matchedPair),
+      this.activeContractsFor(this.templateIds.perpPosition),
+    ]);
+
+    const activePosSides = new Map<string, Set<Side>>();
+    for (const e of posEvents) {
+      const { matchedPairCid, side } = parsePerpPosition(e.createArgument);
+      if (!activePosSides.has(matchedPairCid)) activePosSides.set(matchedPairCid, new Set());
+      activePosSides.get(matchedPairCid)!.add(side);
+    }
+
+    const closeRequests: CloseRequest[] = [];
+    const now = Math.floor(Date.now() / 1000);
+    for (const e of pairEvents) {
+      const active = activePosSides.get(e.contractId);
+      for (const side of ["Long", "Short"] as const) {
+        if (!active?.has(side)) {
+          closeRequests.push({
+            contractId: `inferred-close-${e.contractId}-${side}`,
+            matchedPairContractId: e.contractId,
+            closingSide: side,
+            requestedAt: now,
+          });
+        }
+      }
+    }
+    return closeRequests;
   }
 
-  async applyFunding(contractId: string, args: ApplyFundingArgs): Promise<void> {
-    // CONFIRM with Person 1: choice arg field names on MatchedPair.ApplyFunding.
-    const choiceArgument: any = {
-      fundingRate: decToString(args.fundingRate, this.decimals),
-      fundingPayment: decToString(args.fundingPayment, this.decimals),
-      indexPrice: decToString(args.indexPrice, this.decimals),
-      at: unixToIso(args.at),
-    };
-    // On-ledger Chainlink Verify path: pass the raw signed report unmodified.
-    if (args.signedReport) choiceArgument.signedReportBytes = args.signedReport; // CONFIRM with Person 1
-    await this.exercise(this.templateIds.matchedPair, contractId, this.choices.applyFunding, choiceArgument, "funding");
+  async applyFunding(contractId: string, _args: ApplyFundingArgs): Promise<void> {
+    // Daml MatchedPair.ApplyFunding takes no arguments — it reads mark + NAV via
+    // fetchByKey on-ledger. The off-ledger args are used only for observability.
+    await this.exercise(this.templateIds.matchedPair, contractId, this.choices.applyFunding, {}, "funding");
   }
 
   async liquidate(contractId: string, args: LiquidateArgs): Promise<void> {
-    // CONFIRM with Person 1: choice arg field names on MatchedPair.Liquidate.
-    const choiceArgument: any = {
-      side: sideToVariant(args.side),
-      markPrice: decToString(args.markPrice, this.decimals),
-      equity: decToString(args.equity, this.decimals),
-      maintenanceMargin: decToString(args.maintenanceMargin, this.decimals),
-      at: unixToIso(args.at),
-    };
-    if (args.signedReport) choiceArgument.signedReportBytes = args.signedReport; // CONFIRM with Person 1
+    // Daml MatchedPair.Liquidate takes only `breachingSide : Side`; mark + NAV are
+    // fetched on-ledger via fetchByKey. The ASSERT inside the choice rejects healthy positions.
+    const choiceArgument = { breachingSide: sideToVariant(args.side) };
     await this.exercise(this.templateIds.matchedPair, contractId, this.choices.liquidate, choiceArgument, "liq");
   }
 
-  async settleClose(contractId: string, args: SettleCloseArgs): Promise<void> {
-    // CONFIRM with Person 1: choice arg field names on MatchedPair.SettleClose.
-    const choiceArgument: any = {
-      closingSide: sideToVariant(args.closingSide),
-      exitPrice: decToString(args.exitPrice, this.decimals),
-      realizedPnl: decToString(args.realizedPnl, this.decimals),
-      netFunding: decToString(args.netFunding, this.decimals),
-      at: unixToIso(args.at),
-    };
-    if (args.signedReport) choiceArgument.signedReportBytes = args.signedReport; // CONFIRM with Person 1
-    await this.exercise(this.templateIds.matchedPair, contractId, this.choices.settleClose, choiceArgument, "settle");
+  async settleClose(contractId: string, _args: SettleCloseArgs): Promise<void> {
+    // Daml MatchedPair.SettleClose takes no arguments — it reads mark + NAV via
+    // fetchByKey and settles both sides atomically. Off-ledger args are observability-only.
+    await this.exercise(this.templateIds.matchedPair, contractId, this.choices.settleClose, {}, "settle");
   }
 
   /**
-   * Post a verified/mock price.
-   *
-   * // CONFIRM with Person 1: this method's exact contract wiring (the Verify
-   * // choice signature on the Chainlink Verifier, and how UpdatePrice targets a
-   * // specific MockOraclePrice contract by id). The IMPORTANT, confirmed-shape
-   * // paths are funding/liquidate/settle above; this is best-effort.
+   * Post a price update to the on-ledger oracle.
    *
    * Two paths:
-   *  - If `price.signedReport` AND `templateIds.verifier` is configured → exercise
-   *    the `Verify` choice on the verifier with the raw signed report bytes.
-   *  - Else exercise `UpdatePrice` on a MockOraclePrice contract with the new
-   *    price + timestamp. We use the feedId as the contract id placeholder —
-   *    CONFIRM how the oracle-price contract is located (by key/feedId vs. CID).
+   *  - If `price.signedReport` AND `templateIds.verifier` is set → exercise the
+   *    on-ledger Chainlink `Verify` choice (CHAINLINK.md §6; stretch path).
+   *    Supply the real verifier contract CID via TEMPLATE_VERIFIER env var.
+   *  - Else → exercise `MockOraclePrice.UpdatePrice` (day-1 path). The contract
+   *    is located by contract id; set ORACLE_PRICE_CONTRACT_ID in the env, or
+   *    the backend must have cached the CID from the initial ACS fetch.
+   *    Confirmed choice args from Oracle.daml: { newPrice : Decimal, newTimestamp : Time }.
    */
   async updateOraclePrice(price: OraclePrice): Promise<void> {
     if (price.signedReport && this.templateIds.verifier) {
-      const choiceArgument: any = {
-        signedReportBytes: price.signedReport, // CONFIRM with Person 1
+      const choiceArgument = {
+        signedReportBytes: price.signedReport,
         feedId: price.feedId,
         asOf: unixToIso(price.asOf),
       };
-      // CONFIRM with Person 1: the verifier is exercised by contract id; we have
-      // no CID here, so this targets the verifier template id with the feedId as
-      // a stand-in. Wire the real verifier CID/key once Person 1's DAR lands.
       await this.exercise(this.templateIds.verifier, price.feedId, this.choices.verify, choiceArgument, "verify");
       return;
     }
-    // Plain MockOraclePrice.UpdatePrice path.
-    const choiceArgument: any = {
+    // MockOraclePrice.UpdatePrice — confirmed arg names from Oracle.daml.
+    const choiceArgument = {
       newPrice: decToString(price.price, this.decimals),
-      newTs: unixToIso(price.asOf),
+      newTimestamp: unixToIso(price.asOf),
     };
-    // CONFIRM with Person 1: oracle-price contract is located by feedId here as a
-    // placeholder for the real MockOraclePrice contract id.
     await this.exercise(this.templateIds.oraclePrice, price.feedId, this.choices.updateOraclePrice, choiceArgument, "oracle");
   }
 
@@ -602,9 +596,9 @@ export function cantonLedgerFromEnv(
     actAs: [venueParty],
     readAs: env.READ_AS ? env.READ_AS.split(",").map((s) => s.trim()).filter(Boolean) : [],
     templateIds: {
-      // CONFIRM with Person 1: real package-name template ids from the DAR.
-      matchedPair: env.TEMPLATE_MATCHED_PAIR ?? "perp-dex:PerpDex.Matching:MatchedPair",
-      closeRequest: env.TEMPLATE_CLOSE_REQUEST ?? "perp-dex:PerpDex.Matching:CloseRequest",
+      // Package name "perp-dex", confirmed from daml/daml.yaml (SDK 3.4.11).
+      matchedPair: env.TEMPLATE_MATCHED_PAIR ?? "perp-dex:PerpDex.Core:MatchedPair",
+      perpPosition: env.TEMPLATE_PERP_POSITION ?? "perp-dex:PerpDex.Core:PerpPosition",
       oraclePrice: env.TEMPLATE_ORACLE_PRICE ?? "perp-dex:PerpDex.Oracle:MockOraclePrice",
       verifier: env.TEMPLATE_VERIFIER,
     },

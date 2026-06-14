@@ -15,7 +15,7 @@ import {
   sideToVariant,
   variantToSide,
   parseMatchedPair,
-  parseCloseRequest,
+  parsePerpPosition,
   extractCreatedEvents,
   buildExerciseCommand,
 } from "../src/ledger/cantonLedger.ts";
@@ -98,8 +98,8 @@ test("parseMatchedPair maps flat Daml createArgument to nested MatchedPair", () 
     longTrader: "Alice::1220aaa",
     shortTrader: "Bob::1220bbb",
     regulator: "Reg::1220rrr",
-    market: "ETH-USD",
-    collateralInstrument: "tMMF-USD",
+    underlying: "ETH-USD",
+    collateralAssetId: "tMMF-USD",
     size: "2.5",
     entryPrice: "3000.0",
     longCollateralQty: "750.0",
@@ -141,29 +141,24 @@ test("parseMatchedPair tolerates numeric decimals and unix-number times", () => 
   assert.equal(mp.lastFundingTime, 1_700_000_000);
 });
 
-/* ---------------------------- parseCloseRequest -------------------------- */
+/* ---------------------------- parsePerpPosition -------------------------- */
 
-test("parseCloseRequest maps flat Daml createArgument to CloseRequest", () => {
-  const cr = parseCloseRequest("00creqcid", {
+test("parsePerpPosition extracts matchedPairCid and side from Daml createArgument", () => {
+  const pos = parsePerpPosition({
     matchedPairCid: "00pairCid",
-    closingSide: "Short",
-    requestedAt: "2026-06-13T12:30:00Z",
+    side: "Short",
   });
-  assert.equal(cr.contractId, "00creqcid");
-  assert.equal(cr.matchedPairContractId, "00pairCid");
-  assert.equal(cr.closingSide, "Short");
-  assert.equal(cr.requestedAt, Date.UTC(2026, 5, 13, 12, 30, 0) / 1000);
+  assert.equal(pos.matchedPairCid, "00pairCid");
+  assert.equal(pos.side, "Short");
 });
 
-test("parseCloseRequest accepts the {Long:{}} variant + alias field", () => {
-  const cr = parseCloseRequest("c", {
-    matchedPairContractId: "p",
-    closingSide: { Long: {} },
-    requestedAt: 1_700_000_000,
+test("parsePerpPosition accepts the {Long:{}} variant form for side", () => {
+  const pos = parsePerpPosition({
+    matchedPairCid: "p",
+    side: { Long: {} },
   });
-  assert.equal(cr.matchedPairContractId, "p");
-  assert.equal(cr.closingSide, "Long");
-  assert.equal(cr.requestedAt, 1_700_000_000);
+  assert.equal(pos.matchedPairCid, "p");
+  assert.equal(pos.side, "Long");
 });
 
 /* --------------------------- extractCreatedEvents ------------------------ */
@@ -284,9 +279,9 @@ test("CantonLedger constructs without throwing (no network)", () => {
       userId: "venue",
       actAs: ["Venue::122"],
       templateIds: {
-        matchedPair: "perp-dex:M:MatchedPair",
-        closeRequest: "perp-dex:M:CloseRequest",
-        oraclePrice: "perp-dex:M:MockOraclePrice",
+        matchedPair: "perp-dex:PerpDex.Core:MatchedPair",
+        perpPosition: "perp-dex:PerpDex.Core:PerpPosition",
+        oraclePrice: "perp-dex:PerpDex.Oracle:MockOraclePrice",
       },
     });
   });
@@ -301,9 +296,9 @@ test("CantonLedger constructs with optional auth/choices/verifier", () => {
       actAs: ["Venue::122"],
       readAs: ["Reg::122"],
       templateIds: {
-        matchedPair: "perp-dex:M:MatchedPair",
-        closeRequest: "perp-dex:M:CloseRequest",
-        oraclePrice: "perp-dex:M:MockOraclePrice",
+        matchedPair: "perp-dex:PerpDex.Core:MatchedPair",
+        perpPosition: "perp-dex:PerpDex.Core:PerpPosition",
+        oraclePrice: "perp-dex:PerpDex.Oracle:MockOraclePrice",
         verifier: "chainlink:V:Verifier",
       },
       choices: { applyFunding: "ApplyFundingV2" },
