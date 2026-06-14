@@ -1,28 +1,114 @@
-/** ConnectScreen.tsx — the Connect-Wallet landing. Pick (or create) which Canton
- * party you are; the whole app then runs from that wallet's point of view. This is
- * also the privacy demo — each wallet sees only what it's a stakeholder on. */
+/** ConnectScreen.tsx — the Darkpool landing page. Sells the product, puts a
+ * Connect-Wallet CTA where users expect it, and makes the privacy viewpoints a
+ * first-class section: step into any party and see only what Canton lets it see. */
 import { useState } from "react";
 import { useStore } from "../store/store.tsx";
-import { shortParty } from "../lib/format.ts";
 import type { Party, PartyRole } from "../domain/types.ts";
 
-const ROLE_META: Record<PartyRole, { emoji: string; tag: string; sees: string; color: string }> = {
-  trader: { emoji: "🔵", tag: "Trader", sees: "Trade, hold a position, fund RWA collateral. Sees only your own orders & position.", color: "var(--blue)" },
-  venue: { emoji: "⚙️", tag: "Operator", sees: "Runs the matching engine + risk loop. Sees the full dark order book and every position.", color: "var(--green)" },
-  regulator: { emoji: "🛡️", tag: "Observer", sees: "Audit-only. Sees every position, counterparty and PnL — but cannot trade or interfere.", color: "var(--amber)" },
-  outsider: { emoji: "👁️", tag: "Public", sees: "Not a stakeholder. Sees only the public price feed — positions are invisible.", color: "var(--down)" },
+const VIEW_META: Record<PartyRole, { tag: string; mark: string; color: string; sees: string }> = {
+  trader: { tag: "Trader", mark: "◆", color: "var(--green)", sees: "Trades and holds a position. Sees only their own orders and position." },
+  venue: { tag: "Operator", mark: "⚙", color: "var(--green)", sees: "Runs the matching engine and risk loop. Sees the full dark book and every position." },
+  regulator: { tag: "Observer", mark: "⬡", color: "var(--amber)", sees: "Audits everything — every position, counterparty and PnL. Cannot trade or interfere." },
+  outsider: { tag: "Public", mark: "○", color: "var(--down)", sees: "Not a stakeholder. Sees only the public price feed — positions are invisible." },
 };
 
 export function ConnectScreen() {
-  const { snap, connect, createSelfCustodyWallet, isMock } = useStore();
-  const [name, setName] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const { snap, connect, isMock } = useStore();
+  const [modal, setModal] = useState(false);
 
   const traders = snap.parties.filter((p) => p.role === "trader");
   const roles = (["venue", "regulator", "outsider"] as PartyRole[])
     .map((r) => snap.parties.find((p) => p.role === r))
     .filter((p): p is Party => !!p);
+
+  return (
+    <div className="lp">
+      <div className="lp-bg" aria-hidden />
+      <header className="lp-nav">
+        <div className="brand">
+          <div className="brand-mark">◈</div>
+          <span className="brand-name">Darkpool</span>
+        </div>
+        <div className="row gap-sm">
+          <span className="lp-status"><span className="dot live" style={{ background: isMock ? "var(--amber)" : "var(--up)" }} />{isMock ? "SIMULATED" : "LIVE · CANTON"}</span>
+          <button className="btn btn-primary" onClick={() => setModal(true)}>Connect Wallet</button>
+        </div>
+      </header>
+
+      <main className="lp-main">
+        <section className="lp-hero">
+          <span className="lp-eyebrow">Private Perpetuals · Canton Network</span>
+          <h1 className="lp-title">Private Perps.<br />Earn Yield with Leverage.</h1>
+          <p className="lp-sub">
+            Leveraged perpetuals that stay private — visible only to you, your counterparty, and a
+            regulator. Your margin is a yield-bearing real-world asset that keeps earning while it
+            backs your position.
+          </p>
+          <div className="lp-cta">
+            <button className="btn btn-primary lp-cta-main" onClick={() => setModal(true)}>Connect Wallet →</button>
+            <a className="lp-cta-link" href="#viewpoints">Explore the viewpoints ↓</a>
+          </div>
+
+          <div className="lp-privacy">
+            <span className="label">Who can see your position?</span>
+            <div className="lp-views">
+              <Vis label="You" ok />
+              <Vis label="Counterparty" ok />
+              <Vis label="Venue" ok />
+              <Vis label="Regulator" ok />
+              <Vis label="Everyone else" />
+            </div>
+          </div>
+        </section>
+
+        <section className="lp-section" id="viewpoints">
+          <div className="lp-section-head">
+            <h2 className="lp-h2">See it from every side</h2>
+            <p className="lp-section-sub">Privacy is structural here — each party sees only what Canton lets it. Step into any viewpoint.</p>
+          </div>
+          <div className="lp-tiles">
+            {traders.map((p) => <ViewTile key={p.partyId} party={p} onConnect={() => connect(p.partyId)} />)}
+            {roles.map((p) => <ViewTile key={p.partyId} party={p} onConnect={() => connect(p.partyId)} />)}
+          </div>
+          {traders.length === 0 && (
+            <p className="lp-hint">No trader wallets yet — connect one to take the first private position.</p>
+          )}
+        </section>
+      </main>
+
+      {modal && <ConnectModal traders={traders} onClose={() => setModal(false)} />}
+    </div>
+  );
+}
+
+function Vis({ label, ok }: { label: string; ok?: boolean }) {
+  return (
+    <span className={`lp-vis ${ok ? "yes" : "no"}`}>
+      <span className="lp-vis-mark">{ok ? "●" : "○"}</span>{label}
+    </span>
+  );
+}
+
+function ViewTile({ party, onConnect }: { party: Party; onConnect: () => void }) {
+  const m = VIEW_META[party.role];
+  return (
+    <button className="lp-tile" onClick={onConnect}>
+      <div className="lp-tile-top">
+        <span className="lp-tile-mark" style={{ color: m.color }}>{m.mark}</span>
+        <span className="lp-tile-tag" style={{ color: m.color }}>{m.tag}</span>
+      </div>
+      <div className="lp-tile-name">{party.label}</div>
+      <div className="lp-tile-sees">{m.sees}</div>
+      <div className="lp-tile-go">Enter →</div>
+    </button>
+  );
+}
+
+function ConnectModal({ traders, onClose }: { traders: Party[]; onClose: () => void }) {
+  const { connect, createSelfCustodyWallet } = useStore();
+  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const create = async () => {
     const n = name.trim();
@@ -30,11 +116,10 @@ export function ConnectScreen() {
     setErr(null);
     setCreating(true);
     try {
-      const id = await createSelfCustodyWallet(n); // browser generates + holds the key
-      if (id) { setName(""); connect(id); }
+      const id = await createSelfCustodyWallet(n);
+      if (id) connect(id);
       else setErr("Onboarding failed — please try again.");
     } catch (e) {
-      // Never let a throw leave the button stuck on "Onboarding…" with no feedback.
       setErr("Onboarding error: " + ((e as Error)?.message ?? String(e)));
     } finally {
       setCreating(false);
@@ -42,62 +127,37 @@ export function ConnectScreen() {
   };
 
   return (
-    <div className="connect">
-      <div className="connect-inner">
-        <div className="connect-head">
-          <div className="brand-mark" style={{ width: 44, height: 44, fontSize: 22 }}>◈</div>
-          <div>
-            <h1 className="connect-title">Darkpool</h1>
-            <p className="connect-sub">Private Perpetual Futures on Canton · Chainlink-priced · RWA-collateralised</p>
-          </div>
-          <span className="chip" style={{ marginLeft: "auto" }}>
-            <span className="dot live" style={{ background: isMock ? "var(--amber)" : "var(--green)" }} />
-            {isMock ? "SIMULATED" : "LIVE · CANTON"}
-          </span>
+    <div className="lp-modal-backdrop" onClick={onClose}>
+      <div className="lp-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="lp-modal-head">
+          <span className="lp-h2">Connect a wallet</span>
+          <button className="lp-modal-x" onClick={onClose} aria-label="Close">✕</button>
         </div>
+        <p className="lp-modal-sub">A self-custody Ed25519 key is generated and held <b>in your browser</b> — you sign your own trades.</p>
 
-        <p className="connect-cta">Connect a wallet to begin — each identity sees only what Canton lets it see.</p>
-
-        <div className="connect-section-label">Trader wallets</div>
-        <div className="wallet-grid">
-          {traders.map((party) => (
-            <WalletCard key={party.partyId} party={party} onConnect={() => connect(party.partyId)} />
-          ))}
-          <div className="wallet-card create" style={{ ["--accent" as any]: "var(--blue)" }}>
-            <div className="wallet-top"><span className="wallet-emoji">🔑</span><span className="wallet-tag" style={{ color: "var(--blue)" }}>Self-custody</span></div>
-            <div className="wallet-name">Connect a wallet</div>
-            <div className="wallet-sees">Generates an Ed25519 key <strong>in your browser</strong> and onboards a real Canton party — you hold the key, you sign your own trades.</div>
-            <input className="input" placeholder="Name (e.g. Charlie)" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
-            <button className="btn btn-long" style={{ height: 38 }} disabled={!name.trim() || creating} onClick={create}>
-              {creating ? "Onboarding… (~15s)" : "Create & connect →"}
-            </button>
-            {err && <div className="wallet-sees" style={{ color: "var(--down)", marginTop: 6 }}>{err}</div>}
-          </div>
+        <div className="field">
+          <input className="input" placeholder="Name (e.g. Alice)" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} autoFocus />
         </div>
+        <button className="btn btn-primary lp-modal-create" disabled={!name.trim() || creating} onClick={create}>
+          {creating ? "Onboarding… (~15s)" : "Create & connect →"}
+        </button>
+        {err && <div className="lp-modal-err">{err}</div>}
 
-        <div className="connect-section-label" style={{ marginTop: 22 }}>Operator & observers</div>
-        <div className="wallet-grid">
-          {roles.map((party) => (
-            <WalletCard key={party.partyId} party={party} onConnect={() => connect(party.partyId)} />
-          ))}
-        </div>
+        {traders.length > 0 && (
+          <>
+            <div className="lp-modal-divider"><span>or reconnect</span></div>
+            <div className="lp-modal-wallets">
+              {traders.map((p) => (
+                <button key={p.partyId} className="lp-modal-wallet" onClick={() => connect(p.partyId)}>
+                  <span className="lp-mw-mark">◆</span>
+                  <span className="lp-mw-name">{p.label}</span>
+                  <span className="lp-mw-go">→</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
-  );
-}
-
-function WalletCard({ party, onConnect }: { party: Party; onConnect: () => void }) {
-  const m = ROLE_META[party.role];
-  return (
-    <button className="wallet-card" onClick={onConnect} style={{ ["--accent" as any]: m.color }}>
-      <div className="wallet-top">
-        <span className="wallet-emoji">{m.emoji}</span>
-        <span className="wallet-tag" style={{ color: m.color }}>{m.tag}</span>
-      </div>
-      <div className="wallet-name">{party.label}</div>
-      <div className="wallet-id">{party.partyId ? shortParty(party.partyId) : "…"}</div>
-      <div className="wallet-sees">{m.sees}</div>
-      <div className="wallet-connect">Connect →</div>
-    </button>
   );
 }
