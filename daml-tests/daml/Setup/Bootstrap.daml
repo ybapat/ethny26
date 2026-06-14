@@ -1,0 +1,117 @@
+-- Bootstrap script: allocates parties and creates all on-ledger contracts
+-- needed to run the demo.  Run via:
+--   dpm script --dar daml-tests/.daml/dist/perp-dex-tests-1.0.0.dar \
+--              --script-name Setup.Bootstrap:bootstrap
+-- Or trigger from Seaport → project → Run Script.
+module Setup.Bootstrap where
+
+import Daml.Script
+import DA.Time (addRelTime, hours, days)
+import PerpDex.Oracle
+import PerpDex.Types
+import PerpDex.Core
+
+-- All CIDs printed at the end so the backend / matching engine can be configured.
+data BootstrapResult = BootstrapResult
+  with
+    oracle        : Party
+    venue         : Party
+    regulator     : Party
+    long          : Party
+    short         : Party
+    oracleCid     : ContractId MockOraclePrice
+    rwaNAVCid     : ContractId RWAOracleFeed
+    porCid        : ContractId PoRAttestation
+    marketCid     : ContractId Market
+    longOrderCid  : ContractId Order
+    shortOrderCid : ContractId Order
+  deriving Show
+
+bootstrap : Script BootstrapResult
+bootstrap = do
+  -- ── Parties ──────────────────────────────────────────────────────────────
+  oracle    <- allocatePartyWithHint "Oracle"     (PartyIdHint "Oracle")
+  venue     <- allocatePartyWithHint "Venue"      (PartyIdHint "Venue")
+  regulator <- allocatePartyWithHint "Regulator"  (PartyIdHint "Regulator")
+  long      <- allocatePartyWithHint "LongTrader" (PartyIdHint "LongTrader")
+  short     <- allocatePartyWithHint "ShortTrader"(PartyIdHint "ShortTrader")
+
+  now <- getTime
+  let obs = [venue, regulator, long, short]
+
+  -- ── Oracle contracts ─────────────────────────────────────────────────────
+  oracleCid <- submit oracle do
+    createCmd MockOraclePrice with
+      operator  = oracle
+      observers = obs
+      assetId   = "ETH/USD"
+      price     = 200.0
+      timestamp = now
+
+  rwaNAVCid <- submit oracle do
+    createCmd RWAOracleFeed with
+      operator   = oracle
+      observers  = obs
+      asset      = "T-BILL-USD"
+      navPerUnit = 520.0
+      timestamp  = now
+
+  porCid <- submit oracle do
+    createCmd PoRAttestation with
+      operator       = oracle
+      observers      = obs
+      assetId        = "T-BILL-USD"
+      reserveAmt     = 10_000_000.0
+      issuedSupply   =  9_000_000.0
+      lastAttestedAt = now
+
+  -- ── Market ───────────────────────────────────────────────────────────────
+  marketCid <- submit venue do
+    createCmd Market with
+      venue                = venue
+      regulator            = regulator
+      underlying           = "ETH/USD"
+      leverageCap          = 10.0
+      maintenanceMarginBps = 500
+      fundingIntervalSecs  = 3600
+      collateralWhitelist  = ["T-BILL-USD"]
+      liqPenaltyBps        = 50
+      oracleCid            = oracleCid
+      rwaNAVCid            = rwaNAVCid
+      porCid               = porCid
+
+  -- ── Seed orders (crossing long + short so matching engine fires immediately)
+  -- Long: buy 50 ETH @ $200, 2.0 T-BILL collateral ($1,040 > $1,000 IM)
+  longOrderCid <- submit long do
+    exerciseCmd marketCid PlaceOrder with
+      trader                  = long
+      side                    = Long
+      size                    = 50.0
+      limitPrice              = 200.0
+      collateralQty           = 2.0
+      collateralAssetId       = "T-BILL-USD"
+      collateralAllocationCid = ""
+      timeInForce             = GTC
+      expiresAt               = addRelTime now (days 1)
+
+  -- Short: sell 50 ETH @ $200, same collateral
+  shortOrderCid <- submit short do
+    exerciseCmd marketCid PlaceOrder with
+      trader                  = short
+      side                    = Short
+      size                    = 50.0
+      limitPrice              = 200.0
+      collateralQty           = 2.0
+      collateralAssetId       = "T-BILL-USD"
+      collateralAllocationCid = ""
+      timeInForce             = GTC
+      expiresAt               = addRelTime now (days 1)
+
+  -- ── Summary ──────────────────────────────────────────────────────────────
+  let result = BootstrapResult with
+        oracle; venue; regulator; long; short
+        oracleCid; rwaNAVCid; porCid; marketCid
+        longOrderCid; shortOrderCid
+
+  debug result
+  return result
