@@ -36,7 +36,12 @@
       "Bash(npx tsc *)",
       "Bash(npm run *)",
       "Bash(python3 *)",
-      "Bash(xargs kill -9)"
+      "Bash(xargs kill -9)",
+      "Bash(git rebase *)",
+      "Bash(GIT_EDITOR=true git rebase --continue)",
+      "Bash(git stash *)",
+      "Bash(EDITOR=\"cat\" git rebase --continue)",
+      "Bash(EDITOR=vi git rebase --continue)"
     ]
   }
 }

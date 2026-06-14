@@ -343,6 +343,26 @@ async function setup() {
   candles.set(UI_MARKET, seedCandles(entry));
   fundingNextAt = Date.now() + FUNDING_SECS * 1000;
 
+  console.log("[gateway] seeding market maker…");
+  const mmParty = await onboardExternal(`mm-${ts}`);
+  world.traders.push({ partyId: mmParty, label: "Market Maker" });
+  world.obs.push(mmParty);
+  await mintDelta(mmParty, 20); // 20 RWA tokens at NAV ~520 ≈ $10k collateral
+  const MM_SPREAD = 0.005; // 50 bps per level; FV = live Chainlink ETH/USD price
+  const MM_SIZE = 0.5;
+  const MM_LEV = 5;
+  const mmQuotes: Array<[string, number]> = [
+    ["Long",  1 - MM_SPREAD],
+    ["Long",  1 - 2 * MM_SPREAD],
+    ["Short", 1 + MM_SPREAD],
+    ["Short", 1 + 2 * MM_SPREAD],
+  ];
+  for (const [side, mult] of mmQuotes) {
+    const r = await placeAndLock(mmParty, side, MM_SIZE, r2(entry * mult), MM_LEV);
+    if (!r.ok) console.warn(`[gateway] MM quote failed (${side} @${r2(entry * mult)}): ${r.err}`);
+  }
+  console.log(`[gateway] market maker ready (${mmParty.split("::")[0]}): quoted ±${MM_SPREAD * 100}bps and ±${MM_SPREAD * 200}bps around Chainlink ETH/USD ${entry}`);
+
   world.ready = true;
   console.log(`[gateway] world ready. venue=${world.venue.split("::")[0]} entry≈${entry}`);
   saveWorld();
@@ -451,6 +471,15 @@ async function tick() {
     await pushMark(r2(live.price)); // PURE real Chainlink Data Streams price — no synthetic modification
   } catch (e) { rollCandle(UI_MARKET, curPrice.get(UI_MARKET)!); }
 
+  if (tickCount % 20 === 0) {
+    const freshPor = await fetchChainlinkPoR();
+    if (freshPor) {
+      world.por = { reserveAmt: r6(freshPor.reserves), issuedSupply: r6(freshPor.reserves * 0.92), at: nowS() };
+      const pr = await exer(`${ORC}:PoRAttestation`, world.porCid, "UpdateAttestation", { newReserve: dg(world.por.reserveAmt), newSupply: dg(world.por.issuedSupply), newTs: iso() }, [world.oracle]);
+      if (pr.ok) { const livePor = (await active(`${ORC}:PoRAttestation`)).find((c: any) => c.arg.operator === world.oracle); if (livePor) world.porCid = livePor.cid; }
+    }
+  }
+
   const matched = await matchBook();
   await evaluateRisk(Date.now() >= fundingNextAt);
   await refresh();
@@ -489,12 +518,10 @@ async function evaluateRisk(fundingDue: boolean) {
 }
 
 function recordLiquidation(cid: string, side: string, mark: number, size: number, entry: number, accrued: number, eq: number, mm: number) {
-  const seized = (side === "Long" ? 0 : 0); // value tape below
   liquidations.unshift({ id: idg("liq"), market: UI_MARKET, contractId: cid, side, markPrice: mark, equity: eq, maintenanceMargin: mm, seized: r6(Math.abs(risk.unrealizedPnl(side as any, size, entry, mark))), at: nowS() });
   liquidations.length = Math.min(liquidations.length, MAX_TAPE);
   settlements.unshift({ id: idg("set"), market: UI_MARKET, contractId: cid, closingSide: side, exitPrice: mark, realizedPnl: -Math.abs(risk.unrealizedPnl(side as any, size, entry, mark)), netFunding: accrued, at: nowS() });
   settlements.length = Math.min(settlements.length, MAX_TAPE);
-  void seized;
 }
 
 /* ------------------------------ snapshot builder ---------------------------- */
