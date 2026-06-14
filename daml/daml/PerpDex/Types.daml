@@ -1,0 +1,53 @@
+-- Shared types, math helpers, and margin formulas used by Core.daml.
+-- All financial logic follows DEX.md.  Precision: 8 dp prices, 6 dp quantities;
+-- round against the trader at final settlement only.
+module PerpDex.Types where
+
+-- ─── Enumerations ─────────────────────────────────────────────────────────────
+
+data Side = Long | Short
+  deriving (Eq, Show)
+
+-- Serialises to Canton JSON as {"GTC":{}} / {"IOC":{}} / {"FOK":{}},
+-- which is what the C++ matching engine's nlohmann::json::contains() check expects.
+data TimeInForce = GTC | IOC | FOK
+  deriving (Eq, Show)
+
+-- +1 for long, -1 for short  (UPnL = (mark - entry) * size * sideSign)
+sideSign : Side -> Decimal
+sideSign Long  =  1.0
+sideSign Short = -1.0
+
+oppositeSide : Side -> Side
+oppositeSide Long  = Short
+oppositeSide Short = Long
+
+-- ─── Math helpers ─────────────────────────────────────────────────────────────
+
+clampD : Decimal -> Decimal -> Decimal -> Decimal
+clampD lo hi x = max lo (min hi x)
+
+-- Unrealized PnL for one side of a position (DEX.md §4)
+-- UPnL = (mark - entry) * size * sideSign
+upnl : Decimal -> Decimal -> Decimal -> Side -> Decimal
+upnl markPrice entryPrice posSize side =
+  (markPrice - entryPrice) * posSize * sideSign side
+
+-- Equity for one side of a position (DEX.md §6)
+-- Funding is applied directly to collateral quantities in ApplyFunding, so
+-- we do not carry an extra accruedFunding parameter here.
+-- Equity = CollateralValue + UPnL  (no haircut: CollateralValue = qty * nav)
+equity : Decimal -> Decimal -> Decimal -> Decimal -> Decimal -> Side -> Decimal
+equity collQty navPerUnit markPrice entryPrice posSize side =
+  collQty * navPerUnit + upnl markPrice entryPrice posSize side
+
+-- Maintenance margin required  (DEX.md §7.1)
+-- MM = size * mark * MMR
+maintenanceMargin : Decimal -> Decimal -> Int -> Decimal
+maintenanceMargin posSize markPrice mmrBps =
+  posSize * markPrice * (intToDecimal mmrBps / 10000.0)
+
+-- Initial margin required  (DEX.md §3.1); IMR = 2 * MMR
+initialMargin : Decimal -> Decimal -> Int -> Decimal
+initialMargin posSize limitPrice mmrBps =
+  posSize * limitPrice * (intToDecimal mmrBps / 10000.0) * 2.0
