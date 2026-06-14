@@ -26,6 +26,7 @@
  * Run:  npm run gateway
  */
 import http from "node:http";
+import fs from "node:fs";
 import { SDK, signTransactionHash } from "@canton-network/wallet-sdk";
 import { m2mProviderFromEnv } from "./ledger/auth.ts";
 import { dataStreamsPriceSourceFromEnv } from "./oracle/fromEnv.ts";
@@ -247,6 +248,48 @@ async function mintDelta(owner: string, delta: number) {
   await setBalance(owner, (toks.get(owner)?.amount ?? 0) + delta, toks);
 }
 
+/* ----------------------------- world persistence ---------------------------- */
+// Persist venue/oracle keys and contract IDs so a gateway restart reuses the
+// same parties and market instead of creating a new world (which orphans wallets).
+
+const WORLD_FILE = process.env.WORLD_FILE ?? "world-state.json";
+
+function saveWorld() {
+  try {
+    fs.writeFileSync(WORLD_FILE, JSON.stringify({
+      venue: world.venue, oracle: world.oracle, regulator: world.regulator, outsider: world.outsider,
+      oracleCid: world.oracleCid, rwaNAVCid: world.rwaNAVCid, porCid: world.porCid, marketCid: world.marketCid,
+      traders: world.traders, nav: world.nav, por: world.por, porSource: world.porSource,
+      keys: Object.fromEntries(keyMap),
+    }, null, 2));
+  } catch (e) { console.warn("[gateway] saveWorld failed:", (e as Error).message); }
+}
+
+async function tryRestoreWorld(): Promise<boolean> {
+  try {
+    if (!fs.existsSync(WORLD_FILE)) return false;
+    const data = JSON.parse(fs.readFileSync(WORLD_FILE, "utf8"));
+    const markets = (await active(`${CORE}:Market`)).filter((c: any) => c.arg.venue === data.venue);
+    if (!markets.length) { console.log("[gateway] world-state.json found but market gone — rebuilding"); return false; }
+    world.venue = data.venue; world.oracle = data.oracle;
+    world.regulator = data.regulator; world.outsider = data.outsider;
+    world.marketCid = markets[0].cid;
+    world.traders = data.traders ?? []; world.nav = data.nav ?? NAV0;
+    world.obs = [world.venue, world.regulator, world.outsider, ...world.traders.map((t: any) => t.partyId)];
+    if (data.por) world.por = data.por;
+    if (data.porSource) world.porSource = data.porSource;
+    for (const [k, v] of Object.entries(data.keys ?? {})) keyMap.set(k, v as string);
+    const liveOracle = (await active(`${ORC}:MockOraclePrice`)).find((c: any) => c.arg.operator === world.oracle);
+    const liveNav = (await active(`${ORC}:RWAOracleFeed`)).find((c: any) => c.arg.operator === world.oracle);
+    const livePor = (await active(`${ORC}:PoRAttestation`)).find((c: any) => c.arg.operator === world.oracle);
+    world.oracleCid = liveOracle?.cid ?? data.oracleCid;
+    world.rwaNAVCid = liveNav?.cid ?? data.rwaNAVCid;
+    world.porCid = livePor?.cid ?? data.porCid;
+    console.log(`[gateway] restored from ${WORLD_FILE}: venue=${world.venue.split("::")[0]} traders=${world.traders.length}`);
+    return true;
+  } catch (e) { console.warn("[gateway] restore failed:", (e as Error).message); return false; }
+}
+
 /* --------------------------------- setup ------------------------------------ */
 
 async function setup() {
@@ -259,6 +302,17 @@ async function setup() {
   sdk = await (SDK as any).create({ auth: { method: "static", token: await p.getToken() }, ledgerClientUrl: base });
   synchronizerId = sdk.ctx.defaultSynchronizerId;
   console.log("[gateway] Wallet SDK ready; synchronizer", String(synchronizerId).slice(0, 28), "…");
+
+  if (await tryRestoreWorld()) {
+    const live = await prices.getPerpPrice("ETH-USD").catch(() => ({ price: SEED_PRICE[UI_MARKET] }));
+    curPrice.set(UI_MARKET, r2(live.price));
+    candles.set(UI_MARKET, seedCandles(r2(live.price)));
+    fundingNextAt = Date.now() + FUNDING_SECS * 1000;
+    world.ready = true;
+    await tick();
+    return;
+  }
+
   const ts = Date.now().toString(36);
   console.log("[gateway] allocating parties (venue + traders are EXTERNAL / self-custody-capable)…");
   world.oracle = await allocate(`oracle-${ts}`);     // local: signs oracle feeds (custodial)
@@ -288,10 +342,10 @@ async function setup() {
 
   candles.set(UI_MARKET, seedCandles(entry));
   fundingNextAt = Date.now() + FUNDING_SECS * 1000;
-  // No seeded positions: everyone starts at 0, funds via the faucet, then trades.
 
   world.ready = true;
   console.log(`[gateway] world ready. venue=${world.venue.split("::")[0]} entry≈${entry}`);
+  saveWorld();
   await tick();
 }
 
@@ -621,6 +675,7 @@ async function handleAction(path: string, body: any): Promise<{ ok: boolean; err
       await post(`/v2/users/${userId}/rights`, { userId, rights: [{ kind: { CanReadAs: { value: { party: body.party } } } }] });
       await setBalance(body.party, SEED_FREE);                 // mint starting RWA to the self-custody wallet
       world.traders.push({ partyId: body.party, label: String(body.name || "Wallet") });
+      saveWorld();
       await refresh();
       return { ok: true, party: body.party } as any;
     }
@@ -630,6 +685,7 @@ async function handleAction(path: string, body: any): Promise<{ ok: boolean; err
       const party = await onboardExternal(hint);     // gateway-held external trader (custodial)
       world.traders.push({ partyId: party, label: name });
       world.obs.push(party);
+      saveWorld();
       await setBalance(party, SEED_FREE);             // 0 — fund via faucet
       await refresh();
       return { ok: true, party };
