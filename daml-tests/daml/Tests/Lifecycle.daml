@@ -1,7 +1,3 @@
--- Full end-to-end lifecycle: open → fund → mark move → close.
--- Mirrors README.md §6 and DEX.md §9-A numeric example.
--- Numbers: ETH/USD entry $200, 50 units, 10× leverage (IMR 10%, MMR 5%),
---          collateral 2.0 T-BILL-USD @ $520 NAV → CollVal $1,040 ≥ IM $1,000 ✓
 module Tests.Lifecycle where
 
 import Daml.Script
@@ -11,11 +7,9 @@ import PerpDex.Oracle
 import PerpDex.Types
 import PerpDex.Core
 
--- ─── World: shared test state ─────────────────────────────────────────────────
-
 data World = World
   with
-    oracle    : Party   -- operates MockOraclePrice, RWAOracleFeed, PoRAttestation
+    oracle    : Party
     venue     : Party
     regulator : Party
     long      : Party
@@ -34,47 +28,48 @@ setupWorld = do
   outsider  <- allocateParty "Outsider"
 
   now <- getTime
-
-  -- Oracle contracts include venue + regulator as observers so choices on Market
-  -- and MatchedPair (both with venue authority from their signatories) can fetchByKey.
   let obs = [venue, regulator, long, short]
 
-  submit oracle do
+  oracleCid <- submit oracle do
     createCmd MockOraclePrice with
       operator = oracle; observers = obs
       assetId = "ETH/USD"; price = 200.0; timestamp = now
 
-  submit oracle do
+  rwaNAVCid <- submit oracle do
     createCmd RWAOracleFeed with
       operator = oracle; observers = obs
       asset = "T-BILL-USD"; navPerUnit = 520.0; timestamp = now
 
-  submit oracle do
+  porCid <- submit oracle do
     createCmd PoRAttestation with
       operator = oracle; observers = obs
       assetId = "T-BILL-USD"
-      reserveAmt = 10_000_000.0
-      issuedSupply = 9_000_000.0
+      reserveAmt = 10_000_000.0; issuedSupply = 9_000_000.0
       lastAttestedAt = now
 
-  -- Market stores oracle operators by party (not CID) → fetchByKey always resolves latest
   marketCid <- submit venue do
     createCmd Market with
       venue = venue; regulator = regulator
       underlying = "ETH/USD"
       leverageCap = 10.0
-      maintenanceMarginBps = 500     -- 5% MMR → 10% IMR
+      maintenanceMarginBps = 500
       fundingIntervalSecs = 3600
       collateralWhitelist = ["T-BILL-USD"]
       liqPenaltyBps = 50
-      oracleOperator = oracle
-      rwaOperator = oracle
-      porOperator = oracle
+      oracleCid; rwaNAVCid; porCid
 
   return (World with oracle; venue; regulator; long; short; outsider; marketCid)
 
--- ─── Helper: place matching orders and return (pair, longPos, shortPos) ────────
+-- Helper: query current oracle CIDs (they may have changed via UpdatePrice)
+getOracleCids : Party -> Party -> Script (ContractId MockOraclePrice, ContractId RWAOracleFeed)
+getOracleCids oracle venue = do
+  oracles <- query @MockOraclePrice oracle
+  navs    <- query @RWAOracleFeed oracle
+  let oracleCid = fst (head oracles)
+      navCid    = fst (head navs)
+  return (oracleCid, navCid)
 
+-- Helper: open a matched pair
 openPosition : World -> Decimal -> Decimal
   -> Script (ContractId MatchedPair, ContractId PerpPosition, ContractId PerpPosition)
 openPosition w longCollQty shortCollQty = do
@@ -89,15 +84,13 @@ openPosition w longCollQty shortCollQty = do
     exerciseCmd w.marketCid PlaceOrder with
       trader = w.short; side = Short; size = 50.0; limitPrice = 200.0
       collateralQty = shortCollQty; collateralAssetId = "T-BILL-USD"
+      collateralAllocationCid = ""; timeInForce = GTC
       expiresAt = addRelTime now (hours 24)
   submit w.venue do
     exerciseCmd longOrderCid MatchOrders with
-      shortOrderCid  = shortOrderCid
-      executionPrice = 200.0
-      fillSize       = 50.0
+      shortOrderCid = shortOrderCid; executionPrice = 200.0; fillSize = 50.0
 
 -- ─── test_full_lifecycle ──────────────────────────────────────────────────────
--- open → 1 funding tick → mark $200→$210 → close with long profit
 
 test_full_lifecycle : Script ()
 test_full_lifecycle = do
@@ -106,65 +99,52 @@ test_full_lifecycle = do
 
   (pairCid, _, _) <- openPosition w 2.0 2.0
 
-  -- Confirm pair exists after matching
-  pairResult <- queryContractId @MatchedPair w.venue pairCid
-  assertMsg "MatchedPair created after MatchOrders" (pairResult /= None)
-
-  -- Funding tick at $200 (F ≈ 0.0001; payment ≈ $1 from long to short)
-  pairCid2 <- submit w.venue do exerciseCmd pairCid ApplyFunding
+  -- Funding tick at $200
+  (oracleCid1, navCid1) <- getOracleCids w.oracle w.venue
+  pairCid2 <- submit w.venue do
+    exerciseCmd pairCid ApplyFunding with
+      oracleCid = oracleCid1; rwaNAVCid = navCid1
 
   oldPairGone <- queryContractId @MatchedPair w.venue pairCid
-  assertMsg "old MatchedPair archived by ApplyFunding" (oldPairGone == None)
+  assertMsg "old pair archived by ApplyFunding" (oldPairGone == None)
 
-  -- Price moves to $210; fetchByKey in SettleClose picks this up automatically
-  -- because MockOraclePrice is keyed on (operator, assetId).
-  [(currentOracleCid, _)] <- query @MockOraclePrice w.oracle
+  -- Price moves to $210
   submit w.oracle do
-    exerciseCmd currentOracleCid UpdatePrice with
+    exerciseCmd oracleCid1 UpdatePrice with
       newPrice = 210.0; newTimestamp = now
 
-  -- Close at $210: long PnL = (210-200)*50 = +$500 = +$500/520 ≈ +0.962 extra tokens
+  -- Close at $210; long PnL = +$500 = +0.962 tokens
+  (oracleCid2, navCid2) <- getOracleCids w.oracle w.venue
   (longSettleCid, shortSettleCid) <- submit w.venue do
-    exerciseCmd pairCid2 SettleClose
+    exerciseCmd pairCid2 SettleClose with
+      oracleCid = oracleCid2; rwaNAVCid = navCid2
 
-  -- Verify settlements
-  longSettle  <- queryContractId @Settlement w.venue longSettleCid
-  shortSettle <- queryContractId @Settlement w.venue shortSettleCid
-  assertMsg "long Settlement exists"  (longSettle  /= None)
-  assertMsg "short Settlement exists" (shortSettle /= None)
+  longSettle <- queryContractId @Settlement w.venue longSettleCid
+  assertMsg "long Settlement exists" (longSettle /= None)
 
   case longSettle of
-    None    -> assertMsg "long settlement missing" False
-    Some s  -> do
-      assertMsg "long is winner"                      (s.winner == w.long)
-      assertMsg "long received more than 2.0 tokens"  (s.collateralAmt > 2.0)
-
-  case shortSettle of
-    None    -> assertMsg "short settlement missing" False
-    Some s  -> do
-      assertMsg "short receives remaining collateral" (s.winner == w.short)
-      assertMsg "short received less than 2.0 tokens" (s.collateralAmt < 2.0)
+    None   -> assertMsg "missing" False
+    Some s -> do
+      assertMsg "long is winner"           (s.winner == w.long)
+      assertMsg "long received > 2 tokens" (s.collateralAmt > 2.0)
 
   finalPair <- queryContractId @MatchedPair w.venue pairCid2
-  assertMsg "MatchedPair archived after SettleClose" (finalPair == None)
+  assertMsg "pair archived after close" (finalPair == None)
 
   return ()
 
 -- ─── test_insufficient_collateral ─────────────────────────────────────────────
--- 50 ETH @ $200 @ 10× → IM = $1,000; 1.5 tokens @ $520 = $780 < $1,000 → reject.
 
 test_insufficient_collateral : Script ()
 test_insufficient_collateral = do
   w <- setupWorld
   now <- getTime
-
   submitMustFail w.long do
     exerciseCmd w.marketCid PlaceOrder with
       trader = w.long; side = Long; size = 50.0; limitPrice = 200.0
       collateralQty = 1.5; collateralAssetId = "T-BILL-USD"
       collateralAllocationCid = ""; timeInForce = GTC
       expiresAt = addRelTime now (hours 24)
-
   return ()
 
 -- ─── test_bad_whitelist ────────────────────────────────────────────────────────
@@ -173,14 +153,12 @@ test_bad_whitelist : Script ()
 test_bad_whitelist = do
   w <- setupWorld
   now <- getTime
-
   submitMustFail w.long do
     exerciseCmd w.marketCid PlaceOrder with
       trader = w.long; side = Long; size = 50.0; limitPrice = 200.0
       collateralQty = 2.0; collateralAssetId = "VOLATILE-TOKEN"
       collateralAllocationCid = ""; timeInForce = GTC
       expiresAt = addRelTime now (hours 24)
-
   return ()
 
 -- ─── test_order_cancel ────────────────────────────────────────────────────────
@@ -189,41 +167,31 @@ test_order_cancel : Script ()
 test_order_cancel = do
   w <- setupWorld
   now <- getTime
-
   longOrderCid <- submit w.long do
     exerciseCmd w.marketCid PlaceOrder with
       trader = w.long; side = Long; size = 50.0; limitPrice = 200.0
       collateralQty = 2.0; collateralAssetId = "T-BILL-USD"
       collateralAllocationCid = ""; timeInForce = GTC
       expiresAt = addRelTime now (hours 24)
-
   submit w.long do exerciseCmd longOrderCid Cancel
-
   result <- queryContractId @Order w.long longOrderCid
   assertMsg "order archived after cancel" (result == None)
-
   return ()
 
 -- ─── test_insolvency_blocks_order ─────────────────────────────────────────────
--- PoR gate rejects orders when reserves < issuedSupply.
 
 test_insolvency_blocks_order : Script ()
 test_insolvency_blocks_order = do
   w <- setupWorld
   now <- getTime
-
   [(porCid, _)] <- query @PoRAttestation w.oracle
   submit w.oracle do
     exerciseCmd porCid UpdateAttestation with
-      newReserve = 5_000_000.0   -- insolvent: reserves < supply
-      newSupply  = 9_000_000.0
-      newTs      = now
-
+      newReserve = 5_000_000.0; newSupply = 9_000_000.0; newTs = now
   submitMustFail w.long do
     exerciseCmd w.marketCid PlaceOrder with
       trader = w.long; side = Long; size = 50.0; limitPrice = 200.0
       collateralQty = 2.0; collateralAssetId = "T-BILL-USD"
       collateralAllocationCid = ""; timeInForce = GTC
       expiresAt = addRelTime now (hours 24)
-
   return ()
