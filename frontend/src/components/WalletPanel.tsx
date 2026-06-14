@@ -93,6 +93,7 @@ function PoRCard() {
                   <span className={`chip ${p.solvent ? "chip-long" : "chip-short"}`}>{p.solvent ? "SOLVENT" : "UNDER-RESERVED"}</span>
                 </div>
               </div>
+              {p.source && <span className="chip" style={{ marginTop: 6, fontSize: 10 }} title="Live Chainlink Proof-of-Reserve feed read on-chain">📡 {p.source}</span>}
               <div className="holding-meta">
                 <Meta label="Reserves" value={fmtUsd(p.reserves, 0)} />
                 <Meta label="Issued supply" value={fmtUsd(p.issuedSupply, 0)} />

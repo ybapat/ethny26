@@ -14,7 +14,7 @@ const ROLE_META: Record<PartyRole, { emoji: string; tag: string; sees: string; c
 };
 
 export function ConnectScreen() {
-  const { snap, connect, createWallet, isMock } = useStore();
+  const { snap, connect, createSelfCustodyWallet, isMock } = useStore();
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -27,7 +27,7 @@ export function ConnectScreen() {
     const n = name.trim();
     if (!n || creating) return;
     setCreating(true);
-    const id = await createWallet(n);
+    const id = await createSelfCustodyWallet(n); // browser generates + holds the key
     setCreating(false);
     setName("");
     if (id) connect(id);
@@ -56,12 +56,12 @@ export function ConnectScreen() {
             <WalletCard key={party.partyId} party={party} onConnect={() => connect(party.partyId)} />
           ))}
           <div className="wallet-card create" style={{ ["--accent" as any]: "var(--blue)" }}>
-            <div className="wallet-top"><span className="wallet-emoji">＋</span><span className="wallet-tag" style={{ color: "var(--blue)" }}>New trader</span></div>
-            <div className="wallet-name">Create a wallet</div>
-            <div className="wallet-sees">Allocates a real Canton party and mints starting RWA collateral.</div>
+            <div className="wallet-top"><span className="wallet-emoji">🔑</span><span className="wallet-tag" style={{ color: "var(--blue)" }}>Self-custody</span></div>
+            <div className="wallet-name">Connect a wallet</div>
+            <div className="wallet-sees">Generates an Ed25519 key <strong>in your browser</strong> and onboards a real Canton party — you hold the key, you sign your own trades.</div>
             <input className="input" placeholder="Name (e.g. Charlie)" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
             <button className="btn btn-long" style={{ height: 38 }} disabled={!name.trim() || creating} onClick={create}>
-              {creating ? "Creating…" : "Create & connect →"}
+              {creating ? "Onboarding…" : "Create & connect →"}
             </button>
           </div>
         </div>

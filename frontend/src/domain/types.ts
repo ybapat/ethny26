@@ -195,6 +195,8 @@ export interface PoRStatus {
   /** On the collateral whitelist (gates acceptance). */
   whitelisted: boolean;
   asOf: number;
+  /** Where the reserve figure comes from (e.g. a live Chainlink PoR feed). */
+  source?: string;
 }
 
 /** One OHLC candle for the price chart. */

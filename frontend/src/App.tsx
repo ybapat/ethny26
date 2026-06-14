@@ -4,6 +4,7 @@
  *  - regulator:          audit (see-all) view
  *  - outsider:           public price only
  */
+import { useState } from "react";
 import { useStore } from "./store/store.tsx";
 import { TopBar } from "./components/TopBar.tsx";
 import { ConnectScreen } from "./components/ConnectScreen.tsx";
@@ -15,18 +16,30 @@ import { OrdersTable, PositionsTable } from "./components/PositionsPanel.tsx";
 import { VenuePanel } from "./components/VenuePanel.tsx";
 
 export function App() {
-  const { connected, role } = useStore();
+  const { connected, role, snap } = useStore();
   if (!connected) return <ConnectScreen />;
 
   return (
     <div className="app">
       <TopBar />
+      {snap.error && <ErrorBanner msg={snap.error} />}
       <main className="main">
         {role === "trader" && <TraderView />}
         {role === "venue" && <VenueView />}
         {role === "regulator" && <AuditView />}
         {role === "outsider" && <OutsiderView />}
       </main>
+    </div>
+  );
+}
+
+function ErrorBanner({ msg }: { msg: string }) {
+  const [hidden, setHidden] = useState("");
+  if (hidden === msg) return null;
+  return (
+    <div style={{ padding: "8px 16px", background: "var(--down-soft)", color: "var(--down)", fontSize: 12.5, display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid var(--down)" }}>
+      <span style={{ flex: 1 }}>⚠ {msg}</span>
+      <button className="btn btn-sm btn-ghost" onClick={() => setHidden(msg)}>dismiss</button>
     </div>
   );
 }

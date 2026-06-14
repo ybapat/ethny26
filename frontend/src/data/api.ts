@@ -33,6 +33,8 @@ export interface Backend {
   withdraw(party: string, instrument: string, amount: number): boolean;
   /** Allocate a new trader wallet (a real Canton party, live) and return its id. */
   createWallet(name: string): Promise<string | null>;
+  /** Create a SELF-CUSTODY wallet — keypair generated + held in the browser. */
+  createSelfCustodyWallet(name: string): Promise<string | null>;
 }
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL as string | undefined;

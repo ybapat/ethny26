@@ -1,0 +1,32 @@
+-- Real on-ledger RWA collateral token.
+--
+-- A yield-bearing tokenized real-world asset used as margin. Its USD value is
+-- amount * NAV, where NAV comes from RWAOracleFeed (PerpDex.Oracle) and accrues
+-- over time (the APY). This is an issuer-custodied test token: the issuer (the
+-- venue's RWA operator party) mints balances and adjusts them for the
+-- lock/settle accounting. Each trader holds at most one RWAToken per instrument.
+module PerpDex.RWA where
+
+template RWAToken
+  with
+    issuer     : Party
+    owner      : Party
+    instrument : Text      -- e.g. "tMMF-USD"; NAV looked up from RWAOracleFeed
+    amount     : Decimal   -- token units held (free balance)
+  where
+    signatory issuer
+    observer  owner
+
+    -- Mint/burn/lock accounting: set this holder's balance to a new amount.
+    choice SetBalance : ContractId RWAToken
+        with newAmount : Decimal
+      controller issuer
+      do
+        assertMsg "balance cannot be negative" (newAmount >= 0.0)
+        create this with amount = newAmount
+
+    -- Reassign ownership (e.g. a real transfer between traders).
+    choice TransferTo : ContractId RWAToken
+        with newOwner : Party
+      controller issuer
+      do create this with owner = newOwner

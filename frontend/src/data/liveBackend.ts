@@ -11,6 +11,7 @@
  * gateway already validates and only mutates the ledger on success.
  */
 import { INSTRUMENTS, MARKETS, SEED_PRICE } from "../domain/config.ts";
+import { generateKeypair, signHash, rememberWallet, walletKey } from "./wallet.ts";
 import type { EngineSnapshot, PlaceOrderInput } from "./mockEngine.ts";
 import type { OraclePrice, Party, Side } from "../domain/types.ts";
 
@@ -18,10 +19,10 @@ type Listener = (s: EngineSnapshot) => void;
 
 const POLL_MS = 2000;
 
-/** Roles shown before the first snapshot arrives (real party ids fill in on poll). */
+/** Roles shown before the first snapshot arrives (real party ids fill in on poll).
+ * No seeded traders — the trader roster starts empty and fills in only when wallets
+ * are created via the self-custody Connect flow. */
 const PLACEHOLDER_PARTIES: Party[] = [
-  { role: "trader", partyId: "", label: "Alice" },
-  { role: "trader", partyId: "", label: "Bob" },
   { role: "venue", partyId: "", label: "Venue Operator" },
   { role: "regulator", partyId: "", label: "Regulator" },
   { role: "outsider", partyId: "", label: "Outsider" },
@@ -46,6 +47,7 @@ export class LiveBackend {
   private snap: EngineSnapshot = defaultSnapshot();
   private listeners = new Set<Listener>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private lastError: string | null = null; // surfaced to the UI so failures aren't silent
 
   constructor(base: string) {
     this.base = base.replace(/\/+$/, "");
@@ -89,6 +91,7 @@ export class LiveBackend {
       if (!res.ok) return;
       const j = (await res.json()) as EngineSnapshot;
       if (j && Array.isArray(j.parties) && j.parties.length) {
+        if (this.lastError) (j as any).error = this.lastError; // keep error visible across polls
         this.snap = j;
         this.emit();
       }
@@ -98,13 +101,13 @@ export class LiveBackend {
   }
 
   /** Fire an action, then poll immediately so the UI updates without waiting. */
-  private send(path: string, body: unknown): Promise<{ ok: boolean; error?: string; party?: string }> {
+  private send(path: string, body: unknown): Promise<{ ok: boolean; error?: string; party?: string; multiHash?: string; hash?: string; prepareId?: string }> {
     return fetch(`${this.base}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify(body),
     })
-      .then(async (r) => (await r.json()) as { ok: boolean; error?: string; party?: string })
+      .then(async (r) => (await r.json()) as any)
       .catch((e) => ({ ok: false, error: String(e) }))
       .then((out) => { void this.poll(); return out; });
   }
@@ -113,8 +116,23 @@ export class LiveBackend {
 
   placeOrder(input: PlaceOrderInput): { ok: boolean; error?: string } {
     if (input.size <= 0) return { ok: false, error: "Size must be positive" };
-    void this.send("/api/order", input);
+    this.lastError = null;
+    const priv = walletKey(input.trader);
+    if (priv) { void this.selfCustodyOrder(input, priv); return { ok: true }; } // browser-signed
+    // custodial trader (gateway holds the key)
+    void this.send("/api/order", input).then((r) => { if (!r.ok) this.fail("Order rejected: " + (r.error ?? "")); });
     return { ok: true }; // optimistic; the order appears on the next poll if accepted
+  }
+
+  private fail(msg: string): void { this.lastError = msg; (this.snap as any).error = msg; this.emit(); }
+
+  /** Self-custody order: gateway prepares, the BROWSER signs the hash, gateway executes. */
+  private async selfCustodyOrder(input: PlaceOrderInput, privateKey: string): Promise<void> {
+    const op = await this.send("/api/wallet/order-prepare", { trader: input.trader, side: input.side, size: input.size, limitPrice: input.limitPrice, leverage: input.leverage });
+    if (!op.ok || !op.hash || !op.prepareId) { this.fail("Order rejected: " + (op.error ?? "could not prepare")); return; }
+    const signature = signHash(op.hash, privateKey);
+    const ex = await this.send("/api/wallet/order-execute", { prepareId: op.prepareId, signature });
+    if (!ex.ok) this.fail("Order failed on execute: " + (ex.error ?? ""));
   }
 
   cancelOrder(contractId: string): void {
@@ -130,8 +148,21 @@ export class LiveBackend {
   }
 
   async createWallet(name: string): Promise<string | null> {
-    const out = (await this.send("/api/create-wallet", { name })) as { ok: boolean; party?: string };
+    const out = await this.send("/api/create-wallet", { name });
     return out.ok && out.party ? out.party : null;
+  }
+
+  /** Create a SELF-CUSTODY wallet: keypair generated + held in the browser; the
+   * gateway only relays onboarding. The private key never leaves this device. */
+  async createSelfCustodyWallet(name: string): Promise<string | null> {
+    const { publicKey, privateKey } = generateKeypair();
+    const prep = await this.send("/api/wallet/onboard-prepare", { publicKey, name });
+    if (!prep.ok || !prep.party || !prep.multiHash) return null;
+    const signature = signHash(prep.multiHash, privateKey);          // BROWSER signs the topology
+    const exec = await this.send("/api/wallet/onboard-execute", { party: prep.party, signature, name });
+    if (!exec.ok) return null;
+    rememberWallet(prep.party, privateKey);                          // persist locally for trade signing
+    return prep.party;
   }
 
   applyFunding(market: string): void {

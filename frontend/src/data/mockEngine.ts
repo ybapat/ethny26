@@ -92,6 +92,8 @@ export interface EngineSnapshot {
   fundingByMarket: Record<string, { rate: number; nextAt: number }>;
   /** Real money-market APY the RWA NAV accrues at (live gateway sources it from the US Treasury). */
   rwaApy?: number;
+  /** Last action error surfaced from the live backend (so failures aren't silent). */
+  error?: string;
 }
 
 export interface PlaceOrderInput {
@@ -144,6 +146,11 @@ export class MockEngine {
     ]);
     this.emit();
     return id;
+  }
+
+  /** Self-custody wallet (mock: no real crypto — same as createWallet). */
+  async createSelfCustodyWallet(name: string): Promise<string | null> {
+    return this.createWallet(name);
   }
 
   /** Force/simulate a liquidation of one side of a pair (drives the demo path). */

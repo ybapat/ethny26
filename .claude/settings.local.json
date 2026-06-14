@@ -24,7 +24,12 @@
       "Bash(git pull *)",
       "Bash(node *)",
       "Bash(npm test *)",
-      "Bash(python3 -m json.tool)"
+      "Bash(python3 -m json.tool)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:blog.1inch.com)",
+      "WebFetch(domain:ethglobal.com)"
     ]
   }
 }

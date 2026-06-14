@@ -69,6 +69,7 @@ interface StoreValue {
   withdraw: typeof backend.withdraw;
   setRunning: typeof backend.setRunning;
   createWallet: typeof backend.createWallet;
+  createSelfCustodyWallet: typeof backend.createSelfCustodyWallet;
 }
 
 export interface DepthLevel {
@@ -164,6 +165,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     withdraw: backend.withdraw.bind(backend),
     setRunning: backend.setRunning.bind(backend),
     createWallet: backend.createWallet.bind(backend),
+    createSelfCustodyWallet: backend.createSelfCustodyWallet.bind(backend),
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
