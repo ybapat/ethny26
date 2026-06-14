@@ -1,4 +1,4 @@
-# Frontend — DARKPOOL (Private Perps on Canton)
+# Frontend — NYX (Private Perps on Canton)
 
 The party-view-switching trading UI for the private perpetual-futures DEX. It is
 the "privacy money-shot" surface from [PLAN.md](../PLAN.md) §7 plus a full trading

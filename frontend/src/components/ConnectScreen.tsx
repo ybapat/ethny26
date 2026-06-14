@@ -1,8 +1,9 @@
-/** ConnectScreen.tsx — the Darkpool landing page. Sells the product, puts a
+/** ConnectScreen.tsx — the Nyx landing page. Sells the product, puts a
  * Connect-Wallet CTA where users expect it, and makes the privacy viewpoints a
  * first-class section: step into any party and see only what Canton lets it see. */
 import { useState } from "react";
 import { useStore } from "../store/store.tsx";
+import { NyxMark } from "./NyxMark.tsx";
 import type { Party, PartyRole } from "../domain/types.ts";
 
 const VIEW_META: Record<PartyRole, { tag: string; mark: string; color: string; sees: string }> = {
@@ -26,8 +27,8 @@ export function ConnectScreen() {
       <div className="lp-bg" aria-hidden />
       <header className="lp-nav">
         <div className="brand">
-          <div className="brand-mark">◈</div>
-          <span className="brand-name">Darkpool</span>
+          <NyxMark />
+          <span className="brand-name">nyx</span>
         </div>
         <div className="row gap-sm">
           <span className="lp-status"><span className="dot live" style={{ background: isMock ? "var(--amber)" : "var(--up)" }} />{isMock ? "SIMULATED" : "LIVE · CANTON"}</span>
@@ -37,7 +38,7 @@ export function ConnectScreen() {
 
       <main className="lp-main">
         <section className="lp-hero">
-          <span className="lp-eyebrow">Private Perpetuals · Canton Network</span>
+          <span className="lp-eyebrow">Private Perpetuals · Canton Network · Chainlink-Priced</span>
           <h1 className="lp-title">Private Perps.<br />Earn Yield with Leverage.</h1>
           <p className="lp-sub">
             Leveraged perpetuals that stay private — visible only to you, your counterparty, and a

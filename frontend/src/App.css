@@ -25,14 +25,14 @@
 .brand-mark {
   width: 34px;
   height: 34px;
-  border-radius: 9px;
-  background: var(--green);
+  border-radius: 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
   display: grid;
   place-items: center;
-  color: var(--on-accent);
-  font-weight: 800;
-  font-size: 17px;
+  box-shadow: var(--inset);
 }
+.brand-moon { width: 18px; height: 18px; display: block; filter: drop-shadow(0 0 2.5px var(--green-glow)); }
 .brand-name {
   font-family: var(--font-display);
   font-weight: 700;

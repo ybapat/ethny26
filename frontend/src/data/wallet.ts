@@ -10,7 +10,7 @@
 import nacl from "tweetnacl";
 import { encodeBase64, decodeBase64 } from "tweetnacl-util";
 
-const LS_KEY = "darkpool.wallets.v1"; // { [partyId]: privateKeyBase64 }
+const LS_KEY = "nyx.wallets.v1"; // { [partyId]: privateKeyBase64 }
 
 // In-memory fallback for when localStorage is unavailable (private mode, storage
 // blocked by browser settings, or quota). Without this, a setItem that throws used

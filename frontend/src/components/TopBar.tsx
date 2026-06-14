@@ -4,6 +4,7 @@
 import { useStore } from "../store/store.tsx";
 import { fmtUsd } from "../lib/format.ts";
 import { usePriceFlash } from "../lib/hooks.ts";
+import { NyxMark } from "./NyxMark.tsx";
 
 export function TopBar() {
   const { snap, market, party, disconnect } = useStore();
@@ -16,9 +17,9 @@ export function TopBar() {
   return (
     <header className="topbar">
       <div className="brand">
-        <div className="brand-mark">◈</div>
+        <NyxMark />
         <div className="col">
-          <span className="brand-name">Darkpool</span>
+          <span className="brand-name">nyx</span>
           <span className="brand-sub">Private Perpetuals</span>
         </div>
       </div>
