@@ -11,7 +11,11 @@
     "test": "node --test",
     "typecheck": "tsc -p tsconfig.json",
     "fetch": "node --env-file-if-exists=.env src/fetchPrice.ts",
-    "start": "node --env-file-if-exists=.env src/liveChainlink.ts",
+    "smoke": "node --env-file-if-exists=.env src/smoke.ts",
+    "bootstrap": "node --env-file-if-exists=.env src/bootstrap.ts",
+    "e2e": "node --env-file-if-exists=.env src/e2e.ts",
+    "keeper": "node --env-file-if-exists=.env src/keeper.ts",
+    "start": "node --env-file-if-exists=.env src/keeper.ts",
     "live:chainlink": "node --env-file-if-exists=.env src/liveChainlink.ts"
   },
   "devDependencies": {
