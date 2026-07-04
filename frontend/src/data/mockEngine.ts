@@ -14,6 +14,7 @@
  * for a client that calls the JSON Ledger API / PQS and nothing in the UI changes.
  */
 
+import { generateKeypair, rememberWallet } from "./wallet.ts";
 import {
   collateralValue,
   equity,
@@ -148,9 +149,16 @@ export class MockEngine {
     return id;
   }
 
-  /** Self-custody wallet (mock: no real crypto — same as createWallet). */
+  /** Self-custody wallet: generate a real Ed25519 keypair and store it in
+   * localStorage exactly as the live backend does, so hasKey is always true
+   * after creation and the wallet is tradeable in the same session. */
   async createSelfCustodyWallet(name: string): Promise<string | null> {
-    return this.createWallet(name);
+    const id = await this.createWallet(name);
+    if (id) {
+      const { privateKey } = generateKeypair();
+      rememberWallet(id, privateKey);
+    }
+    return id;
   }
 
   /** Force/simulate a liquidation of one side of a pair (drives the demo path). */
